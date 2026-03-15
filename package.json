@@ -1,0 +1,27 @@
+{
+  "name": "downey-evals-loop",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -p tsconfig.node.json && vite build",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "auto-debug-loop": "node scripts/auto-debug-loop.mjs",
+    "start": "node dist/src/index.js",
+    "serve": "node scripts/serve-dist.mjs",
+    "preview": "vite preview"
+  },
+  "devDependencies": {
+    "@types/node": "^24.5.2",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.0.4",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4",
+    "typescript": "^5.9.2",
+    "vite": "^6.4.1",
+    "vitest": "^3.2.4"
+  }
+}
