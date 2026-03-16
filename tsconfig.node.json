@@ -1,18 +1,18 @@
 {
+  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "NodeNext",
-    "moduleResolution": "NodeNext",
-    "strict": true,
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "skipLibCheck": true,
-    "outDir": "dist",
-    "rootDir": ".",
-    "declaration": true
+    "noEmit": false,
+    "outDir": "dist/server",
+    "rootDir": "src"
   },
   "include": [
+    "src/contracts/**/*.ts",
+    "src/shared/**/*.ts",
     "src/domain/**/*.ts",
+    "src/infra/**/*.ts",
+    "src/runner/**/*.ts",
+    "src/services/**/*.ts",
+    "src/server/**/*.ts",
     "src/index.ts"
   ]
 }

@@ -1,11 +1,78 @@
 import {
+  Dataset,
+  DatasetColumn,
   EvalCase,
-  ExperimentCaseRun,
   ExperimentRun,
   RetrievalCandidate,
   SearchPipelineVersion,
 } from "./types.js";
-import { evaluateSearchCase } from "./evaluators.js";
+import { buildExperimentCaseRun, summarizeExperimentRun } from "./experiment.js";
+import { builtInEvaluators } from "./evaluators.js";
+
+const now = "2026-03-17T00:00:00.000Z";
+
+const datasetColumns: Record<Dataset["datasetType"], DatasetColumn[]> = {
+  ideal_output: [
+    {
+      name: "input",
+      dataType: "String",
+      required: true,
+      description: "评测对象的输入内容",
+    },
+    {
+      name: "reference_output",
+      dataType: "String",
+      required: false,
+      description: "理想输出，可作为参考标准",
+    },
+    {
+      name: "context",
+      dataType: "JSON",
+      required: false,
+      description: "补充上下文、业务标签或召回候选",
+    },
+  ],
+  workflow: [
+    {
+      name: "input",
+      dataType: "String",
+      required: true,
+      description: "工作流原始输入",
+    },
+    {
+      name: "workflow_output",
+      dataType: "JSON",
+      required: true,
+      description: "工作流最终输出",
+    },
+    {
+      name: "expected_steps",
+      dataType: "JSON",
+      required: false,
+      description: "期望的步骤列表",
+    },
+  ],
+  trace_monitor: [
+    {
+      name: "trace_id",
+      dataType: "String",
+      required: true,
+      description: "trace 唯一标识",
+    },
+    {
+      name: "final_output",
+      dataType: "String",
+      required: true,
+      description: "最终输出",
+    },
+    {
+      name: "trajectory",
+      dataType: "JSON",
+      required: false,
+      description: "轨迹与工具调用详情",
+    },
+  ],
+};
 
 const candidate = (
   id: string,
@@ -65,7 +132,8 @@ export const sampleCases: EvalCase[] = [
     expectedRetrievalIds: ["sku_y1", "sku_y2"],
     acceptableRetrievalIds: ["sku_y4"],
     expectedTopItems: ["sku_y1"],
-    answerReference: "优先推荐儿童低糖酸奶 6 杯装，低糖且更适合孩子；如果更看重配料简单，也可以考虑无糖希腊酸奶。",
+    answerReference:
+      "优先推荐儿童低糖酸奶 6 杯装，低糖且更适合孩子；如果更看重配料简单，也可以考虑无糖希腊酸奶。",
     businessOutcomeLabels: {
       wouldClick: true,
       wouldConvert: true,
@@ -74,6 +142,44 @@ export const sampleCases: EvalCase[] = [
     },
   },
 ];
+
+export const sampleDatasets: Dataset[] = [
+  {
+    id: "dataset_ideal_001",
+    name: "外卖 AI 搜理想输出集",
+    description: "外卖/商超 AI 搜的基础理想输出评测集",
+    datasetType: "ideal_output",
+    schema: datasetColumns.ideal_output,
+    cases: sampleCases,
+    version: "0.1.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "dataset_workflow_001",
+    name: "AI 搜 Workflow 执行集",
+    description: "面向 agent workflow 节点执行与工具调用评测",
+    datasetType: "workflow",
+    schema: datasetColumns.workflow,
+    cases: [],
+    version: "0.1.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "dataset_trace_001",
+    name: "AI 搜 Trace 监控集",
+    description: "面向运行轨迹监控、异常归因与 replay 观察",
+    datasetType: "trace_monitor",
+    schema: datasetColumns.trace_monitor,
+    cases: [],
+    version: "0.1.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+];
+
+export const sampleEvaluators = builtInEvaluators;
 
 export const baselinePipeline: SearchPipelineVersion = {
   id: "search_pipeline_v1",
@@ -95,121 +201,101 @@ export const candidatePipeline: SearchPipelineVersion = {
   answerer: "gpt-answer-v2",
 };
 
-const buildCaseRun = (
-  evalCase: EvalCase,
-  targetId: string,
-  retrievalResult: RetrievalCandidate[],
-  rerankResult: RetrievalCandidate[],
-  answerOutput: string,
-  latencyMs: { retrieval: number; rerank: number; answer: number },
-): ExperimentCaseRun => {
-  const run: ExperimentCaseRun = {
-    caseId: evalCase.caseId,
-    targetId,
-    trace: {
-      traceId: `${targetId}_${evalCase.caseId}`,
-      caseId: evalCase.caseId,
-      retrievalTrace: {
-        layer: "retrieval",
-        latencyMs: latencyMs.retrieval,
-        inputs: { userQuery: evalCase.userQuery },
-        outputs: { retrievalResult },
-      },
-      rerankTrace: {
-        layer: "rerank",
-        latencyMs: latencyMs.rerank,
-        inputs: { retrievalResult },
-        outputs: { rerankResult },
-      },
-      answerTrace: {
-        layer: "answer",
-        latencyMs: latencyMs.answer,
-        inputs: { rerankResult },
-        outputs: { answerOutput },
-      },
-    },
-    layerRuns: [
-      {
-        caseId: evalCase.caseId,
-        layer: "retrieval",
-        outputs: { retrievalResult },
-      },
-      {
-        caseId: evalCase.caseId,
-        layer: "rerank",
-        outputs: { rerankResult },
-      },
-      {
-        caseId: evalCase.caseId,
-        layer: "answer",
-        outputs: { answerOutput },
-      },
-      {
-        caseId: evalCase.caseId,
-        layer: "overall",
-        outputs: {},
-      },
-    ],
-    layerMetrics: [],
-  };
-
-  run.layerMetrics = evaluateSearchCase(evalCase, run);
-  run.trace.layerMetrics = Object.fromEntries(
-    run.layerMetrics.map((metric) => [metric.metricName, metric]),
-  );
-  return run;
-};
-
 export const buildSampleExperiments = (): {
   baseline: ExperimentRun;
   candidate: ExperimentRun;
 } => {
   const [foodCase, groceryCase] = sampleCases;
 
+  const baselineCaseRuns = [
+    buildExperimentCaseRun(foodCase, baselinePipeline, {
+      retrievalResult: [
+        foodCase.retrievalCandidates[0]!,
+        foodCase.retrievalCandidates[1]!,
+        foodCase.retrievalCandidates[3]!,
+      ],
+      rerankResult: [
+        foodCase.retrievalCandidates[0]!,
+        foodCase.retrievalCandidates[1]!,
+        foodCase.retrievalCandidates[3]!,
+      ],
+      answerOutput: "建议选川香小炒双人餐，38 元，口味偏辣但不算油，适合两个人晚饭。",
+      latencyMs: { retrieval: 120, rerank: 55, answer: 220 },
+    }),
+    buildExperimentCaseRun(groceryCase, baselinePipeline, {
+      retrievalResult: [
+        groceryCase.retrievalCandidates[0]!,
+        groceryCase.retrievalCandidates[1]!,
+        groceryCase.retrievalCandidates[3]!,
+      ],
+      rerankResult: [
+        groceryCase.retrievalCandidates[0]!,
+        groceryCase.retrievalCandidates[1]!,
+        groceryCase.retrievalCandidates[3]!,
+      ],
+      answerOutput:
+        "优先推荐儿童低糖酸奶 6 杯装，低糖更适合孩子；如果想要更简单配料，也可以看无糖希腊酸奶。",
+      latencyMs: { retrieval: 110, rerank: 48, answer: 190 },
+    }),
+  ];
+
+  const candidateCaseRuns = [
+    buildExperimentCaseRun(foodCase, candidatePipeline, {
+      retrievalResult: [
+        foodCase.retrievalCandidates[1]!,
+        foodCase.retrievalCandidates[2]!,
+        foodCase.retrievalCandidates[3]!,
+      ],
+      rerankResult: [
+        foodCase.retrievalCandidates[2]!,
+        foodCase.retrievalCandidates[1]!,
+        foodCase.retrievalCandidates[3]!,
+      ],
+      answerOutput:
+        "这里有几种选择。我先从整体风味、热量、受欢迎程度、配送稳定性四个维度给你展开分析。第一，炸鸡桶套餐虽然 42 元略超预算，但很适合分享；第二，麻辣烫也可以考虑。",
+      latencyMs: { retrieval: 150, rerank: 70, answer: 320 },
+    }),
+    buildExperimentCaseRun(groceryCase, candidatePipeline, {
+      retrievalResult: [
+        groceryCase.retrievalCandidates[0]!,
+        groceryCase.retrievalCandidates[2]!,
+        groceryCase.retrievalCandidates[3]!,
+      ],
+      rerankResult: [
+        groceryCase.retrievalCandidates[2]!,
+        groceryCase.retrievalCandidates[0]!,
+        groceryCase.retrievalCandidates[3]!,
+      ],
+      answerOutput:
+        "我给你详细分析一下。高糖风味酸奶口感会更好，儿童低糖酸奶也可以，但如果不确定口味你还可以先都看看，再结合活动价格做决定。",
+      latencyMs: { retrieval: 135, rerank: 68, answer: 300 },
+    }),
+  ];
+
   const baseline: ExperimentRun = {
     experimentId: "exp_baseline",
+    datasetId: sampleDatasets[0]!.id,
+    evaluatorIds: sampleEvaluators.map((item) => item.id),
+    pipelineVersionId: baselinePipeline.id,
     target: baselinePipeline,
-    caseRuns: [
-      buildCaseRun(
-        foodCase,
-        baselinePipeline.id,
-        [foodCase.retrievalCandidates[0]!, foodCase.retrievalCandidates[1]!, foodCase.retrievalCandidates[3]!],
-        [foodCase.retrievalCandidates[0]!, foodCase.retrievalCandidates[1]!, foodCase.retrievalCandidates[3]!],
-        "建议选川香小炒双人餐，38 元，口味偏辣但不算油，适合两个人晚饭。",
-        { retrieval: 120, rerank: 55, answer: 220 },
-      ),
-      buildCaseRun(
-        groceryCase,
-        baselinePipeline.id,
-        [groceryCase.retrievalCandidates[0]!, groceryCase.retrievalCandidates[1]!, groceryCase.retrievalCandidates[3]!],
-        [groceryCase.retrievalCandidates[0]!, groceryCase.retrievalCandidates[1]!, groceryCase.retrievalCandidates[3]!],
-        "优先推荐儿童低糖酸奶 6 杯装，低糖更适合孩子；如果想要更简单配料，也可以看无糖希腊酸奶。",
-        { retrieval: 110, rerank: 48, answer: 190 },
-      ),
-    ],
+    status: "FINISHED",
+    startedAt: now,
+    finishedAt: now,
+    summary: summarizeExperimentRun(baselineCaseRuns),
+    caseRuns: baselineCaseRuns,
   };
 
   const candidate: ExperimentRun = {
     experimentId: "exp_candidate",
+    datasetId: sampleDatasets[0]!.id,
+    evaluatorIds: sampleEvaluators.map((item) => item.id),
+    pipelineVersionId: candidatePipeline.id,
     target: candidatePipeline,
-    caseRuns: [
-      buildCaseRun(
-        foodCase,
-        candidatePipeline.id,
-        [foodCase.retrievalCandidates[1]!, foodCase.retrievalCandidates[2]!, foodCase.retrievalCandidates[3]!],
-        [foodCase.retrievalCandidates[2]!, foodCase.retrievalCandidates[1]!, foodCase.retrievalCandidates[3]!],
-        "这里有几种选择。我先从整体风味、热量、受欢迎程度、配送稳定性四个维度给你展开分析。第一，炸鸡桶套餐虽然 42 元略超预算，但很适合分享；第二，麻辣烫也可以考虑。",
-        { retrieval: 150, rerank: 70, answer: 320 },
-      ),
-      buildCaseRun(
-        groceryCase,
-        candidatePipeline.id,
-        [groceryCase.retrievalCandidates[0]!, groceryCase.retrievalCandidates[2]!, groceryCase.retrievalCandidates[3]!],
-        [groceryCase.retrievalCandidates[2]!, groceryCase.retrievalCandidates[0]!, groceryCase.retrievalCandidates[3]!],
-        "我给你详细分析一下。高糖风味酸奶口感会更好，儿童低糖酸奶也可以，但如果不确定口味你还可以先都看看，再结合活动价格做决定。",
-        { retrieval: 135, rerank: 68, answer: 300 },
-      ),
-    ],
+    status: "FINISHED",
+    startedAt: now,
+    finishedAt: now,
+    summary: summarizeExperimentRun(candidateCaseRuns),
+    caseRuns: candidateCaseRuns,
   };
 
   return { baseline, candidate };

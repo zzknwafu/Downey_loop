@@ -1,5 +1,6 @@
 import {
   EvalCase,
+  Evaluator,
   ExperimentCaseRun,
   MetricDefinition,
   MetricResult,
@@ -500,4 +501,107 @@ export const evaluateSearchCase = (
       reason: "整体响应时延",
     },
   ];
+};
+
+export const builtInEvaluators: Evaluator[] = metricDefinitions.map((metric) => ({
+  id: `eval_${metric.name}`,
+  name: metric.name,
+  layer: metric.layer,
+  family: metric.evaluatorFamily,
+  metricType: metric.metricType,
+  version: "0.1.0",
+  description: metric.description,
+  config:
+    metric.evaluatorFamily === "code"
+      ? { strategy: metric.codeStrategy ?? "exact_match" }
+      : { strictBinary: metric.metricType === "binary" },
+  codeStrategy: metric.codeStrategy,
+}));
+
+const normalizeValue = (value: string) => value.trim().toLowerCase();
+
+const diceCoefficient = (left: string, right: string): number => {
+  const leftValue = normalizeValue(left);
+  const rightValue = normalizeValue(right);
+
+  if (!leftValue.length || !rightValue.length) {
+    return 0;
+  }
+
+  const bigrams = (input: string) => {
+    const result = new Map<string, number>();
+    for (let index = 0; index < input.length - 1; index += 1) {
+      const token = input.slice(index, index + 2);
+      result.set(token, (result.get(token) ?? 0) + 1);
+    }
+    return result;
+  };
+
+  const leftPairs = bigrams(leftValue);
+  const rightPairs = bigrams(rightValue);
+  let intersection = 0;
+
+  for (const [token, count] of leftPairs.entries()) {
+    if (!rightPairs.has(token)) {
+      continue;
+    }
+    intersection += Math.min(count, rightPairs.get(token) ?? 0);
+  }
+
+  return Number(((2 * intersection) / Math.max(1, leftValue.length + rightValue.length - 2)).toFixed(4));
+};
+
+export const runCodeEvaluator = (
+  strategy: NonNullable<Evaluator["codeStrategy"]>,
+  output: string,
+  reference: string,
+  config: Record<string, unknown> = {},
+): MetricResult => {
+  if (strategy === "exact_match") {
+    const score = normalizeValue(output) === normalizeValue(reference) ? 1 : 0;
+    return {
+      metricName: "exact_match",
+      layer: "answer",
+      metricType: "binary",
+      score,
+      status: "success",
+      reason: score === 1 ? "输出与参考答案完全一致" : "输出与参考答案不一致",
+    };
+  }
+
+  if (strategy === "regex_match") {
+    const pattern = String(config.pattern ?? reference);
+    const flags = String(config.flags ?? "");
+    const matched = new RegExp(pattern, flags).test(output);
+    return {
+      metricName: "regex_match",
+      layer: "answer",
+      metricType: "binary",
+      score: matched ? 1 : 0,
+      status: "success",
+      reason: matched ? "输出命中正则规则" : "输出未命中正则规则",
+    };
+  }
+
+  if (strategy === "fuzzy_match") {
+    const score = diceCoefficient(output, reference);
+    return {
+      metricName: "fuzzy_match",
+      layer: "answer",
+      metricType: "continuous",
+      score,
+      status: "success",
+      reason: "按字符串相似度计算模糊匹配分数",
+    };
+  }
+
+  return {
+    metricName: "python_script",
+    layer: "answer",
+    metricType: "continuous",
+    score: 0,
+    status: "runtime_error",
+    reason:
+      "Python script 评估需要在后端 runner / integration 层执行，前端共享 contract 仅保留该评估器类型定义。",
+  };
 };

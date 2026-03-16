@@ -15,6 +15,10 @@ const buildRun = (
   const run: ExperimentCaseRun = {
     caseId: evalCase.caseId,
     targetId: "test_target",
+    status: "success",
+    output: answerOutput,
+    scores: [],
+    traceId: "trace",
     trace: {
       traceId: "trace",
       caseId: evalCase.caseId,
@@ -42,6 +46,7 @@ const buildRun = (
   };
 
   run.layerMetrics = evaluateSearchCase(evalCase, run);
+  run.scores = run.layerMetrics;
   return run;
 };
 
@@ -98,5 +103,16 @@ describe("experiment comparison", () => {
     expect(comparison.layerDeltas.some((delta) => delta.layer === "retrieval")).toBe(true);
     expect(comparison.layerDeltas.some((delta) => delta.layer === "rerank")).toBe(true);
     expect(comparison.layerDeltas.some((delta) => delta.layer === "answer")).toBe(true);
+  });
+
+  it("produces layer insights for retrieval, rerank, answer and overall", () => {
+    const { baseline, candidate } = buildSampleExperiments();
+    const comparison = compareExperiments(baseline, candidate);
+
+    expect(comparison.layerInsights).toHaveLength(4);
+    expect(comparison.layerInsights.some((insight) => insight.layer === "retrieval")).toBe(true);
+    expect(comparison.layerInsights.some((insight) => insight.layer === "rerank")).toBe(true);
+    expect(comparison.layerInsights.some((insight) => insight.layer === "answer")).toBe(true);
+    expect(comparison.layerInsights.some((insight) => insight.layer === "overall")).toBe(true);
   });
 });

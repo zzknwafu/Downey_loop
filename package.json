@@ -4,14 +4,17 @@
   "private": true,
   "type": "module",
   "scripts": {
-    "dev": "vite",
-    "build": "tsc -p tsconfig.node.json && vite build",
+    "dev": "node scripts/dev.mjs",
+    "dev:web": "vite",
+    "build": "npm run build:server && npm run build:web",
+    "build:server": "tsc -p tsconfig.node.json",
+    "build:web": "vite build",
     "test": "vitest run",
     "test:watch": "vitest",
     "auto-debug-loop": "node scripts/auto-debug-loop.mjs",
-    "start": "node dist/src/index.js",
-    "serve": "node scripts/serve-dist.mjs",
-    "preview": "vite preview"
+    "start": "node dist/server/server/index.js",
+    "serve": "npm run start",
+    "preview": "npm run start"
   },
   "devDependencies": {
     "@types/node": "^24.5.2",

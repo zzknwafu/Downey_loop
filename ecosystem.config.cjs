@@ -2,7 +2,7 @@ module.exports = {
   apps: [
     {
       name: "downey-evals-loop",
-      script: "scripts/serve-dist.mjs",
+      script: "dist/server/server/index.js",
       instances: 1,
       exec_mode: "fork",
       autorestart: true,

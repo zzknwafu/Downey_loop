@@ -188,7 +188,11 @@ const detectEntryIssues = (inspection) => {
   }
 
   const mainText = safeReadText(toRepoPath(inspection.repoPath, "src/web/main.tsx"));
-  if (mainText && !mainText.includes('from "./App.js"')) {
+  if (
+    mainText &&
+    !mainText.includes('from "./App.js"') &&
+    !mainText.includes('from "./App.tsx"')
+  ) {
     findings.push(
       createFinding({
         id: "web_main_import_contract",
