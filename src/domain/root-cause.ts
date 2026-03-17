@@ -84,6 +84,9 @@ export const buildRootCauseSummary = (
   const attributions: AttributionRecord[] = [];
   let headline = "Layer metrics are stable, but case-level trace review is still recommended";
   const proxyCvrDelta = overallDeltas.find((delta) => delta.metricName === "proxy_cvr");
+  const businessGoalAlignmentDelta = overallDeltas.find(
+    (delta) => delta.metricName === "business_goal_alignment",
+  );
 
   if (proxyCvrDelta) {
     const direction = proxyCvrDelta.delta >= 0 ? "上升" : "下降";
@@ -91,12 +94,21 @@ export const buildRootCauseSummary = (
   }
 
   const retrievalCoverageDelta = layerDeltas.find((delta) => delta.metricName === "retrieval_coverage");
+  const retrievalIntentMatchDelta = layerDeltas.find(
+    (delta) => delta.metricName === "retrieval_intent_match",
+  );
   const stockGuardrailDelta = layerDeltas.find((delta) => delta.metricName === "stock_guardrail");
   const rerankDelta = layerDeltas.find((delta) => delta.metricName === "rerank_hit_at_k");
   const budgetGuardrailDelta = layerDeltas.find((delta) => delta.metricName === "budget_guardrail");
+  const deliveryEtaGuardrailDelta = layerDeltas.find(
+    (delta) => delta.metricName === "delivery_eta_guardrail",
+  );
   const answerGroundednessDelta = layerDeltas.find((delta) => delta.metricName === "answer_groundedness");
   const answerConcisenessDelta = layerDeltas.find((delta) => delta.metricName === "answer_conciseness");
   const answerActionabilityDelta = layerDeltas.find((delta) => delta.metricName === "answer_actionability");
+  const answerTrustworthinessDelta = layerDeltas.find(
+    (delta) => delta.metricName === "answer_trustworthiness",
+  );
   const proxyTrustDelta = overallDeltas.find((delta) => delta.metricName === "proxy_trust");
   const proxyDwellDelta = overallDeltas.find((delta) => delta.metricName === "proxy_dwell_time");
 
@@ -109,6 +121,17 @@ export const buildRootCauseSummary = (
       layer: "retrieval",
       delta: stockGuardrailDelta.delta,
       confidence: 0.88,
+      evidenceCaseIds: evidenceByLayer.retrieval,
+    });
+  } else if (retrievalIntentMatchDelta && retrievalIntentMatchDelta.delta <= -0.08) {
+    headline = "Retrieval intent-match regression is the primary driver of overall drop";
+    summary.push("主要负向驱动是 retrieval 虽然有召回，但对预算、口味、品类或时效意图的匹配变差");
+    attributions.push({
+      targetMetric: "business_goal_alignment",
+      candidateDriver: "retrieval_intent_match",
+      layer: "retrieval",
+      delta: retrievalIntentMatchDelta.delta,
+      confidence: 0.85,
       evidenceCaseIds: evidenceByLayer.retrieval,
     });
   } else if (retrievalCoverageDelta && retrievalCoverageDelta.delta <= -0.08) {
@@ -133,6 +156,17 @@ export const buildRootCauseSummary = (
       confidence: 0.84,
       evidenceCaseIds: evidenceByLayer.rerank,
     });
+  } else if (deliveryEtaGuardrailDelta && deliveryEtaGuardrailDelta.delta <= -0.08) {
+    headline = "Rerank delivery-ETA guardrail regression is the primary driver of overall drop";
+    summary.push("主要负向驱动是 rerank 首位候选超出配送时效约束，影响高时效搜索场景的转化");
+    attributions.push({
+      targetMetric: "business_goal_alignment",
+      candidateDriver: "delivery_eta_guardrail",
+      layer: "rerank",
+      delta: deliveryEtaGuardrailDelta.delta,
+      confidence: 0.83,
+      evidenceCaseIds: evidenceByLayer.rerank,
+    });
   } else if (rerankDelta && rerankDelta.delta <= -0.08) {
     headline = "Rerank regression is the primary driver of overall drop";
     summary.push("主要负向驱动是 rerank hit@k 下降，优质候选未进入最终答案");
@@ -145,19 +179,28 @@ export const buildRootCauseSummary = (
       evidenceCaseIds: evidenceByLayer.rerank,
     });
   } else if (
+    (answerTrustworthinessDelta && answerTrustworthinessDelta.delta <= -0.08) ||
     (answerGroundednessDelta && answerGroundednessDelta.delta <= -0.08) ||
     (answerActionabilityDelta && answerActionabilityDelta.delta <= -0.08)
   ) {
     headline = "Answer regression is the primary driver of overall drop";
     summary.push("主要负向驱动是 answer 层质量下降，回答缺少依据或不利于用户决策");
     attributions.push({
-      targetMetric: "proxy_cvr",
+      targetMetric: answerTrustworthinessDelta && answerTrustworthinessDelta.delta <= -0.08
+        ? "proxy_trust"
+        : "proxy_cvr",
       candidateDriver:
-        answerGroundednessDelta && answerGroundednessDelta.delta <= -0.08
-          ? "answer_groundedness"
-          : "answer_actionability",
+        answerTrustworthinessDelta && answerTrustworthinessDelta.delta <= -0.08
+          ? "answer_trustworthiness"
+          : answerGroundednessDelta && answerGroundednessDelta.delta <= -0.08
+            ? "answer_groundedness"
+            : "answer_actionability",
       layer: "answer",
-      delta: answerGroundednessDelta?.delta ?? answerActionabilityDelta?.delta ?? 0,
+      delta:
+        answerTrustworthinessDelta?.delta ??
+        answerGroundednessDelta?.delta ??
+        answerActionabilityDelta?.delta ??
+        0,
       confidence: 0.8,
       evidenceCaseIds: evidenceByLayer.answer,
     });
@@ -185,12 +228,20 @@ export const buildRootCauseSummary = (
     summary.push("实验组的 trust proxy 上升，说明回答依据性或风险控制有所改善");
   }
 
+  if (businessGoalAlignmentDelta && businessGoalAlignmentDelta.delta > 0.05) {
+    summary.push("实验组的 business goal alignment 上升，说明点击、转化与信任目标更一致");
+  }
+
   if (stockGuardrailDelta && stockGuardrailDelta.delta > 0.05) {
     summary.push("实验组在库存护栏上更稳，说明缺货候选被更好地拦截");
   }
 
   if (budgetGuardrailDelta && budgetGuardrailDelta.delta > 0.05) {
     summary.push("实验组在预算护栏上更稳，说明首位推荐更少超出预算");
+  }
+
+  if (deliveryEtaGuardrailDelta && deliveryEtaGuardrailDelta.delta > 0.05) {
+    summary.push("实验组在时效护栏上更稳，说明首位推荐更少超出配送承诺");
   }
 
   if (proxyDwellDelta && proxyDwellDelta.delta > 0.05) {

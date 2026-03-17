@@ -6,6 +6,7 @@ import { createMockEvalLoopApi } from "../src/contracts/mock-api.js";
 import { loadAppConfig } from "../src/infra/config.js";
 import { FileBackedLocalStore } from "../src/infra/store.js";
 import { ExperimentRunner } from "../src/runner/experiment-runner.js";
+import { createSeedSnapshot } from "../src/shared/mock-data.js";
 import { sampleDatasets, sampleEvaluators, baselinePipeline } from "../src/domain/sample-data.js";
 
 const tempDirs: string[] = [];
@@ -74,5 +75,13 @@ describe("runner and infra", () => {
     expect(bootstrap.comparison.rootCauseSummary.length).toBeGreaterThan(0);
     expect(prompts.length).toBeGreaterThan(0);
     expect(agents.length).toBeGreaterThan(0);
+  });
+
+  it("keeps shared mock snapshot ids aligned with experiment and comparison records", () => {
+    const snapshot = createSeedSnapshot();
+    const experimentIds = new Set(snapshot.experiments.map((experiment) => experiment.id));
+
+    expect(experimentIds.has(snapshot.ab_experiment.baseline_run_id)).toBe(true);
+    expect(experimentIds.has(snapshot.ab_experiment.candidate_run_id)).toBe(true);
   });
 });

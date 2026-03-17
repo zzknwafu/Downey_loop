@@ -8,6 +8,7 @@ import {
 } from "./types.js";
 
 const asSet = (values: string[]) => new Set(values);
+const normalizeToken = (value: string) => value.trim().toLowerCase();
 
 const overlapRatio = (actual: string[], expected: string[]): number => {
   if (expected.length === 0) {
@@ -120,6 +121,218 @@ const outputContainsCandidateTitle = (
 const average = (values: number[]) =>
   values.length === 0 ? 0 : Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4));
 
+const targetClozeScore = (actual: number, target: number) =>
+  Number(Math.max(0, 1 - Math.abs(actual - target)).toFixed(4));
+
+const attributeTokenSet = (value: string | number | boolean | undefined): string[] => {
+  if (typeof value === "string") {
+    return value
+      .split(/[,/，、]/)
+      .map(normalizeToken)
+      .filter(Boolean);
+  }
+
+  if (typeof value === "number" || typeof value === "boolean") {
+    return [String(value).toLowerCase()];
+  }
+
+  return [];
+};
+
+const constraintMatchRatio = (actualTokens: string[], expectedTokens: string[]): number => {
+  if (expectedTokens.length === 0) {
+    return 1;
+  }
+
+  if (actualTokens.length === 0) {
+    return 0;
+  }
+
+  const actualSet = asSet(actualTokens.map(normalizeToken));
+  const hitCount = expectedTokens
+    .map(normalizeToken)
+    .filter((token) => actualSet.has(token)).length;
+  return Number((hitCount / expectedTokens.length).toFixed(4));
+};
+
+const candidateIntentScore = (candidate: RetrievalCandidate, evalCase: EvalCase): number => {
+  const constraints = evalCase.queryConstraints;
+  if (!constraints) {
+    return 1;
+  }
+
+  const attrs = candidate.attributes ?? {};
+  const checks: number[] = [];
+
+  if (constraints.category?.length) {
+    checks.push(
+      constraintMatchRatio(attributeTokenSet(attrs.category), constraints.category),
+    );
+  }
+
+  if (constraints.flavor?.length) {
+    checks.push(
+      constraintMatchRatio(attributeTokenSet(attrs.flavorTags), constraints.flavor),
+    );
+  }
+
+  if (constraints.dietary?.length) {
+    checks.push(
+      constraintMatchRatio(attributeTokenSet(attrs.dietaryTags), constraints.dietary),
+    );
+  }
+
+  if (constraints.budgetMax !== undefined && typeof attrs.price === "number") {
+    checks.push(attrs.price <= constraints.budgetMax ? 1 : 0);
+  }
+
+  if (constraints.maxDistanceKm !== undefined && typeof attrs.distanceKm === "number") {
+    checks.push(attrs.distanceKm <= constraints.maxDistanceKm ? 1 : 0);
+  }
+
+  if (constraints.deliveryWithinMinutes !== undefined && typeof attrs.deliveryEtaMin === "number") {
+    checks.push(attrs.deliveryEtaMin <= constraints.deliveryWithinMinutes ? 1 : 0);
+  }
+
+  if (constraints.inStockOnly) {
+    checks.push(attrs.inStock === true ? 1 : 0);
+  }
+
+  return average(checks);
+};
+
+const topCandidateHardConstraintPass = (
+  candidate: RetrievalCandidate | undefined,
+  evalCase: EvalCase,
+): number => {
+  if (!candidate) {
+    return 0;
+  }
+
+  return Number(constraintPreservation([candidate], evalCase).toFixed(4));
+};
+
+const cozeLoopTemplateMap: Record<
+  string,
+  {
+    sourceTemplates: string[];
+    businessRubric: string;
+  }
+> = {
+  retrieval_coverage: {
+    sourceTemplates: ["相关性"],
+    businessRubric: "检查关键候选是否被稳定召回，避免搜索链路首层漏掉高转化商品。",
+  },
+  retrieval_intent_match: {
+    sourceTemplates: ["相关性", "指令遵从度"],
+    businessRubric: "检查召回结果是否真正匹配用户在预算、口味、类目、库存、时效上的明确意图。",
+  },
+  hard_constraint_recall: {
+    sourceTemplates: ["指令遵从度"],
+    businessRubric: "检查预算、库存、距离、时效等硬约束是否在召回层就被遵守。",
+  },
+  stock_guardrail: {
+    sourceTemplates: ["Agent 任务完成度"],
+    businessRubric: "检查有货约束下是否把缺货候选放进结果，避免用户走到下单前才失败。",
+  },
+  noise_rate: {
+    sourceTemplates: ["相关性"],
+    businessRubric: "衡量无关召回占比，噪声越高，后续 rerank 与 answer 越容易漂移。",
+  },
+  evidence_sufficiency: {
+    sourceTemplates: ["深度性", "细节性"],
+    businessRubric: "检查召回结果是否足够支撑最终回答，不足时应主动降级或追问。",
+  },
+  rerank_hit_at_k: {
+    sourceTemplates: ["相关性"],
+    businessRubric: "检查重排结果是否把高价值候选稳定抬进前列。",
+  },
+  rerank_top1_quality: {
+    sourceTemplates: ["有益性", "Agent 任务完成度"],
+    businessRubric: "检查首位推荐是否最适合下单，不只是勉强可用。",
+  },
+  constraint_preservation: {
+    sourceTemplates: ["指令遵从度"],
+    businessRubric: "检查 rerank 后是否仍保住预算、库存、时效等关键约束。",
+  },
+  budget_guardrail: {
+    sourceTemplates: ["Agent 任务完成度"],
+    businessRubric: "检查首位推荐是否超预算，避免高意向场景直接损失转化。",
+  },
+  delivery_eta_guardrail: {
+    sourceTemplates: ["Agent 任务完成度"],
+    businessRubric: "检查首位推荐是否违反用户明确的配送时效要求。",
+  },
+  preference_alignment: {
+    sourceTemplates: ["有益性", "参考答案遵从度"],
+    businessRubric: "检查排序是否贴近用户偏好，例如清淡、辣度、健康或大包装诉求。",
+  },
+  answer_correctness: {
+    sourceTemplates: ["正确性"],
+    businessRubric: "检查答案是否命中推荐对象与关键事实。",
+  },
+  answer_groundedness: {
+    sourceTemplates: ["幻觉现象", "参考答案遵从度"],
+    businessRubric: "检查回答是否明确锚定在真实候选结果上，而不是自由发挥。",
+  },
+  answer_trustworthiness: {
+    sourceTemplates: ["正确性", "幻觉现象"],
+    businessRubric: "检查回答是否可信，是否在事实、约束、推荐对象三方面都没有误导。",
+  },
+  answer_conciseness: {
+    sourceTemplates: ["简洁性"],
+    businessRubric: "检查回答是否短、直、可执行，不堆砌解释。",
+  },
+  answer_actionability: {
+    sourceTemplates: ["有益性"],
+    businessRubric: "检查回答是否真能帮助用户做出下单决策。",
+  },
+  recommendation_explanation_quality: {
+    sourceTemplates: ["深度性", "细节性"],
+    businessRubric: "检查推荐理由是否覆盖价格、库存、时效、规格、口味等关键信息。",
+  },
+  answer_top_item_consistency: {
+    sourceTemplates: ["参考答案遵从度"],
+    businessRubric: "检查最终回答是否和 top1 推荐保持一致，避免排序和生成脱节。",
+  },
+  clarification_decision: {
+    sourceTemplates: ["Agent 轨迹质量"],
+    businessRubric: "检查证据不足时是否应该追问，而不是硬答。",
+  },
+  business_goal_alignment: {
+    sourceTemplates: ["有益性", "Agent 任务完成度"],
+    businessRubric: "综合衡量回答是否同时对点击、转化、停留和信任目标有正向帮助。",
+  },
+  proxy_ctr: {
+    sourceTemplates: ["有益性"],
+    businessRubric: "离线代理点击意图，反映结果是否吸引用户继续浏览。",
+  },
+  proxy_cvr: {
+    sourceTemplates: ["Agent 任务完成度", "有益性"],
+    businessRubric: "离线代理转化意图，反映用户是否更可能下单。",
+  },
+  proxy_dwell_time: {
+    sourceTemplates: ["细节性"],
+    businessRubric: "离线代理停留时长，反映用户是否愿意继续阅读与比较。",
+  },
+  proxy_satisfaction: {
+    sourceTemplates: ["有益性", "正确性"],
+    businessRubric: "离线代理满意度，反映结果是否整体解决用户问题。",
+  },
+  proxy_trust: {
+    sourceTemplates: ["幻觉现象", "正确性"],
+    businessRubric: "离线代理信任度，反映用户是否愿意相信推荐并下单。",
+  },
+  business_guardrail_pass: {
+    sourceTemplates: ["Agent 任务完成度"],
+    businessRubric: "聚合预算、库存、时效、答案一致性等硬护栏，只要一项失守就判失败。",
+  },
+  latency: {
+    sourceTemplates: ["Agent 轨迹质量"],
+    businessRubric: "衡量端到端响应时延，防止高质量但不可用的慢回答。",
+  },
+};
+
 export const metricDefinitions: MetricDefinition[] = [
   {
     name: "retrieval_coverage",
@@ -127,6 +340,13 @@ export const metricDefinitions: MetricDefinition[] = [
     metricType: "continuous",
     evaluatorFamily: "model",
     description: "召回是否覆盖关键候选",
+  },
+  {
+    name: "retrieval_intent_match",
+    layer: "retrieval",
+    metricType: "continuous",
+    evaluatorFamily: "model",
+    description: "召回是否真正命中用户意图与显式约束",
   },
   {
     name: "hard_constraint_recall",
@@ -185,6 +405,14 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "有预算约束时首位候选是否超预算",
   },
   {
+    name: "delivery_eta_guardrail",
+    layer: "rerank",
+    metricType: "binary",
+    evaluatorFamily: "code",
+    codeStrategy: "python_script",
+    description: "有时效约束时首位候选是否超出配送时长",
+  },
+  {
     name: "preference_alignment",
     layer: "rerank",
     metricType: "continuous",
@@ -206,6 +434,13 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "答案是否基于候选结果",
   },
   {
+    name: "answer_trustworthiness",
+    layer: "answer",
+    metricType: "continuous",
+    evaluatorFamily: "model",
+    description: "答案是否可信且没有误导性业务风险",
+  },
+  {
     name: "answer_conciseness",
     layer: "answer",
     metricType: "continuous",
@@ -225,6 +460,14 @@ export const metricDefinitions: MetricDefinition[] = [
     metricType: "continuous",
     evaluatorFamily: "model",
     description: "推荐解释质量",
+  },
+  {
+    name: "answer_top_item_consistency",
+    layer: "answer",
+    metricType: "binary",
+    evaluatorFamily: "code",
+    codeStrategy: "python_script",
+    description: "最终答案是否与重排 top1 保持一致",
   },
   {
     name: "clarification_decision",
@@ -267,6 +510,21 @@ export const metricDefinitions: MetricDefinition[] = [
     metricType: "continuous",
     evaluatorFamily: "model",
     description: "信任代理指标",
+  },
+  {
+    name: "business_goal_alignment",
+    layer: "overall",
+    metricType: "continuous",
+    evaluatorFamily: "model",
+    description: "点击、转化、停留、信任等业务目标的综合对齐程度",
+  },
+  {
+    name: "business_guardrail_pass",
+    layer: "overall",
+    metricType: "binary",
+    evaluatorFamily: "code",
+    codeStrategy: "python_script",
+    description: "业务关键护栏是否全部通过",
   },
   {
     name: "latency",
@@ -366,20 +624,33 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
   const rerankHitAtK = topKHit(rerankIds, evalCase.expectedTopItems, 3);
   const rerankTop1 = top1Quality(rerankIds, evalCase.expectedTopItems);
   const rerankConstraintPreservation = constraintPreservation(rerankCandidates, evalCase);
-  const topRerankPrice = Number(rerankCandidates[0]?.attributes?.price ?? 0);
+  const retrievalIntentMatch = average(
+    retrievalCandidates.slice(0, 3).map((candidate) => candidateIntentScore(candidate, evalCase)),
+  );
+  const topRerankCandidate = rerankCandidates[0];
+  const topRerankPrice = Number(topRerankCandidate?.attributes?.price ?? 0);
   const budgetGuardrailScore =
     evalCase.queryConstraints?.budgetMax !== undefined &&
-    topRerankPrice > evalCase.queryConstraints.budgetMax
+    (!topRerankCandidate || topRerankPrice > evalCase.queryConstraints.budgetMax)
+      ? 0
+      : 1;
+  const topRerankEta = Number(topRerankCandidate?.attributes?.deliveryEtaMin ?? 0);
+  const deliveryEtaGuardrailScore =
+    evalCase.queryConstraints?.deliveryWithinMinutes !== undefined &&
+    (!topRerankCandidate || topRerankEta > evalCase.queryConstraints.deliveryWithinMinutes)
       ? 0
       : 1;
   const preferenceAlignment = overlapRatio(rerankIds.slice(0, 3), evalCase.expectedTopItems);
 
   const lexicalCorrectness = lexicalOverlap(answerOutput, evalCase.answerReference);
+  const topRerankTitle = topRerankCandidate?.title ?? "";
   const mentionsTopItem = outputContainsCandidateTitle(
     answerOutput,
     evalCase.expectedTopItems,
     rerankCandidates,
   );
+  const answerTopItemConsistencyScore =
+    topRerankTitle.length > 0 && answerOutput.includes(topRerankTitle) ? 1 : 0;
   const rawBinaryScore = lexicalCorrectness > 0.45 || mentionsTopItem ? 1 : 0;
   const answerCorrectness = binaryResult(
     "answer_correctness",
@@ -407,6 +678,12 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
     ((lexicalCorrectness + answerGroundedness + answerActionability) / 3).toFixed(4),
   );
   const clarificationDecisionScore = evidenceSufficiency < 0.5 && !mentionsTopItem ? 1 : 0;
+  const answerTrustworthiness = average([
+    answerGroundedness,
+    rawBinaryScore,
+    topCandidateHardConstraintPass(topRerankCandidate, evalCase),
+    answerTopItemConsistencyScore === 1 ? 1 : 0.4,
+  ]);
 
   const proxyCtr = Number(
     ((preferenceAlignment + answerConciseness + answerGroundedness) / 3).toFixed(4),
@@ -425,6 +702,45 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
     rawBinaryScore,
     clarificationDecisionScore === 1 ? 1 : mentionsTopItem ? 1 : 0.6,
   ]);
+  const businessOutcomeLabels = evalCase.businessOutcomeLabels;
+  const expectedDwellScore =
+    businessOutcomeLabels?.dwellLevel === "high"
+      ? 0.9
+      : businessOutcomeLabels?.dwellLevel === "medium"
+        ? 0.6
+        : businessOutcomeLabels?.dwellLevel === "low"
+          ? 0.3
+          : proxyDwellTime;
+  const expectedTrustScore =
+    businessOutcomeLabels?.trustRisk === "low"
+      ? 0.9
+      : businessOutcomeLabels?.trustRisk === "medium"
+        ? 0.7
+        : businessOutcomeLabels?.trustRisk === "high"
+          ? 0.45
+          : answerTrustworthiness;
+  const businessGoalAlignment = average([
+    businessOutcomeLabels?.wouldClick === undefined
+      ? proxyCtr
+      : businessOutcomeLabels.wouldClick
+        ? proxyCtr
+        : Number((1 - proxyCtr).toFixed(4)),
+    businessOutcomeLabels?.wouldConvert === undefined
+      ? proxyCvr
+      : businessOutcomeLabels.wouldConvert
+        ? proxyCvr
+        : Number((1 - proxyCvr).toFixed(4)),
+    targetClozeScore(proxyDwellTime, expectedDwellScore),
+    targetClozeScore(answerTrustworthiness, expectedTrustScore),
+  ]);
+  const businessGuardrailPassScore = [
+    stockGuardrailScore,
+    budgetGuardrailScore,
+    deliveryEtaGuardrailScore,
+    answerTopItemConsistencyScore,
+  ].every((score) => score === 1)
+    ? 1
+    : 0;
   const latencyMs =
     run.trace.retrievalTrace.latencyMs +
     run.trace.rerankTrace.latencyMs +
@@ -439,6 +755,14 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       status: "success",
       reason: "关键召回命中率",
       evidence: evalCase.expectedRetrievalIds,
+    },
+    {
+      metricName: "retrieval_intent_match",
+      layer: "retrieval",
+      metricType: "continuous",
+      score: retrievalIntentMatch,
+      status: "success",
+      reason: "召回结果对预算、类目、口味、库存、时效等用户意图的贴合度",
     },
     {
       metricName: "hard_constraint_recall",
@@ -501,6 +825,12 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       budgetGuardrailScore,
       budgetGuardrailScore === 1 ? "首位候选未超预算" : "首位候选超出预算约束",
     ),
+    binaryResult(
+      "delivery_eta_guardrail",
+      "rerank",
+      deliveryEtaGuardrailScore,
+      deliveryEtaGuardrailScore === 1 ? "首位候选满足配送时效要求" : "首位候选超出配送时效约束",
+    ),
     {
       metricName: "preference_alignment",
       layer: "rerank",
@@ -517,6 +847,14 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       score: answerGroundedness,
       status: "success",
       reason: "答案是否引用重排后候选",
+    },
+    {
+      metricName: "answer_trustworthiness",
+      layer: "answer",
+      metricType: "continuous",
+      score: answerTrustworthiness,
+      status: "success",
+      reason: "答案在事实、约束和推荐对象上的可信度",
     },
     {
       metricName: "answer_conciseness",
@@ -542,6 +880,13 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       status: "success",
       reason: "推荐解释质量",
     },
+    binaryResult(
+      "answer_top_item_consistency",
+      "answer",
+      answerTopItemConsistencyScore,
+      answerTopItemConsistencyScore === 1 ? "答案与重排 top1 推荐保持一致" : "答案未明确承接重排 top1 推荐",
+      topRerankTitle ? [topRerankTitle] : undefined,
+    ),
     binaryResult(
       "clarification_decision",
       "answer",
@@ -589,6 +934,22 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       reason: "用户信任离线代理指标",
     },
     {
+      metricName: "business_goal_alignment",
+      layer: "overall",
+      metricType: "continuous",
+      score: businessGoalAlignment,
+      status: "success",
+      reason: "对点击、转化、停留和信任业务目标的综合对齐程度",
+    },
+    binaryResult(
+      "business_guardrail_pass",
+      "overall",
+      businessGuardrailPassScore,
+      businessGuardrailPassScore === 1
+        ? "预算、库存、时效和答案一致性等关键护栏全部通过"
+        : "至少一项关键业务护栏失败",
+    ),
+    {
       metricName: "latency",
       layer: "overall",
       metricType: "continuous",
@@ -605,7 +966,7 @@ export const builtInEvaluators: Evaluator[] = metricDefinitions.map((metric) => 
   layer: metric.layer,
   family: metric.evaluatorFamily,
   metricType: metric.metricType,
-  version: "0.2.0",
+  version: "0.3.0",
   description: metric.description,
   config:
     metric.evaluatorFamily === "code"
@@ -614,12 +975,16 @@ export const builtInEvaluators: Evaluator[] = metricDefinitions.map((metric) => 
           domainScope: ["food_delivery", "grocery"],
           strategy: metric.codeStrategy ?? "python_script",
           ruleName: metric.name,
+          cozeLoopSourceTemplates: cozeLoopTemplateMap[metric.name]?.sourceTemplates ?? [],
+          businessRubric: cozeLoopTemplateMap[metric.name]?.businessRubric ?? metric.description,
         }
       : {
           judgeType: "llm",
           domainScope: ["food_delivery", "grocery"],
           rubric: metric.description,
           strictBinary: metric.metricType === "binary",
+          cozeLoopSourceTemplates: cozeLoopTemplateMap[metric.name]?.sourceTemplates ?? [],
+          businessRubric: cozeLoopTemplateMap[metric.name]?.businessRubric ?? metric.description,
         },
   codeStrategy: metric.codeStrategy,
 }));

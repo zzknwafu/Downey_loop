@@ -51,6 +51,12 @@ npm start
 - `npm test`
   运行评测逻辑、contract 与本地存储测试。
 
+## Coze Loop 模板提取与映射
+
+- 已下载的开源仓库位于 [`.cache/coze-loop`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop)
+- 已提取的 evaluator / prompt 相关资产位于 [`artifacts/coze-loop-oss`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss)
+- 外卖 / 商超 AI 搜索评估器映射说明见 [`docs/coze-loop-evaluator-mapping.md`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/coze-loop-evaluator-mapping.md)
+
 ## API Contract
 
 最小实体接口定义在 [src/shared/contracts.ts](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/shared/contracts.ts)。
