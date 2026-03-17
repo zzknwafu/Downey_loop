@@ -72,7 +72,7 @@ Date: 2026-03-16
 
 ## 5. Epics
 
-当前 backlog 建议按 6 个 epic 管理。
+当前 backlog 建议按 7 个 epic 管理。
 
 ### Epic A. 文档与信息架构
 
@@ -108,7 +108,41 @@ Issue 候选：
   - `Dataset / Evaluator / Experiment / Trace / Stats` 在文档和 UI 中命名一致
   - `Retrieval / Rerank / Answer / Overall` 命名一致
 
-### Epic B. Dataset 模块
+### Epic B. Targets 模块
+
+目标：
+
+- 提供轻量 PromptVersion / AgentVersion 管理
+- 为实验提供可选择的被测对象
+
+Issue 候选：
+
+#### B1. 实现 PromptVersion / AgentVersion 领域模型
+
+- 类型：backend
+- 优先级：P0
+- 验收标准：
+  - 支持 PromptVersion
+  - 支持 AgentVersion
+  - 支持实验通过 target 引用被测对象
+
+#### B2. 实现 Targets 列表页
+
+- 类型：frontend
+- 优先级：P1
+- 验收标准：
+  - 可查看 prompts 与 agents
+  - 可显示名称、版本、说明
+
+#### B3. 实现轻量“新建 Prompt / 新建 Agent”流程
+
+- 类型：frontend
+- 优先级：P1
+- 验收标准：
+  - 不做重型 IDE
+  - 可录入最小字段并保存
+
+### Epic C. Dataset 模块
 
 目标：
 
@@ -149,7 +183,7 @@ Issue 候选：
   - 支持本地导入样本
   - 导入数据能映射到 schema
 
-### Epic C. Evaluator 模块
+### Epic D. Evaluator 模块
 
 目标：
 
@@ -197,7 +231,7 @@ Issue 候选：
   - binary 指标只接受 `0/1`
   - 非法值标记为 `invalid_judgment`
 
-### Epic D. Experiment 模块
+### Epic E. Experiment 模块
 
 目标：
 
@@ -236,7 +270,7 @@ Issue 候选：
 - 验收标准：
   - 能根据分层 delta 生成结构化归因摘要
 
-### Epic E. Trace 与统计模块
+### Epic F. Trace 与统计模块
 
 目标：
 
@@ -266,7 +300,7 @@ Issue 候选：
 - 验收标准：
   - 可查看 pass rate、average score、latency 指标
 
-### Epic F. Runner 与基础设施
+### Epic G. Runner 与基础设施
 
 目标：
 

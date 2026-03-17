@@ -1,5 +1,6 @@
 import { compareExperiments } from "../domain/comparison.js";
 import {
+  AgentVersion,
   Dataset,
   DatasetColumn,
   Evaluator,
@@ -7,9 +8,16 @@ import {
   ExperimentRun,
   LocalStoreSnapshot,
   PipelineExecutionResult,
+  PromptVersion,
   SearchPipelineVersion,
 } from "../domain/types.js";
-import { buildSampleExperiments, sampleDatasets, sampleEvaluators } from "../domain/sample-data.js";
+import {
+  buildSampleExperiments,
+  sampleAgents,
+  sampleDatasets,
+  sampleEvaluators,
+  samplePrompts,
+} from "../domain/sample-data.js";
 import { FileBackedLocalStore } from "../infra/store.js";
 import { ExperimentRunner, PipelineExecutor } from "../runner/experiment-runner.js";
 
@@ -17,6 +25,22 @@ export interface RunExperimentRequest {
   datasetId: string;
   target: SearchPipelineVersion;
   evaluatorIds?: string[];
+}
+
+export interface CreatePromptRequest {
+  name: string;
+  description?: string;
+  systemPrompt: string;
+  userTemplate: string;
+}
+
+export interface CreateAgentRequest {
+  name: string;
+  description?: string;
+  queryProcessor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
 }
 
 export interface CreateDatasetRequest {
@@ -41,6 +65,80 @@ const now = () => new Date().toISOString();
 const customId = (prefix: string) =>
   `${prefix}_custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
+const DATASET_REQUIRED_FIELDS: Record<Dataset["datasetType"], string[]> = {
+  ideal_output: ["input", "reference_output", "context"],
+  workflow: ["input", "workflow_output", "expected_steps"],
+  trace_monitor: ["trace_id", "final_output", "trajectory"],
+};
+
+const VALID_LAYERS = new Set<Evaluator["layer"]>(["retrieval", "rerank", "answer", "overall"]);
+const VALID_FAMILIES = new Set<Evaluator["family"]>(["model", "code"]);
+const VALID_METRIC_TYPES = new Set<Evaluator["metricType"]>(["binary", "continuous", "categorical"]);
+const VALID_CODE_STRATEGIES = new Set<NonNullable<Evaluator["codeStrategy"]>>([
+  "exact_match",
+  "regex_match",
+  "fuzzy_match",
+  "python_script",
+]);
+
+const ensureNonEmpty = (value: string, fieldName: string) => {
+  if (value.trim().length === 0) {
+    throw new Error(`${fieldName} is required`);
+  }
+};
+
+const validateSchema = (
+  datasetType: Dataset["datasetType"],
+  schema: DatasetColumn[],
+) => {
+  if (schema.length === 0) {
+    throw new Error("Dataset schema must include at least one field");
+  }
+
+  const seen = new Set<string>();
+  for (const field of schema) {
+    ensureNonEmpty(field.name, "Schema field name");
+    ensureNonEmpty(field.description, `Schema field ${field.name} description`);
+    if (seen.has(field.name)) {
+      throw new Error(`Duplicate schema field: ${field.name}`);
+    }
+    seen.add(field.name);
+  }
+
+  const requiredFields = DATASET_REQUIRED_FIELDS[datasetType];
+  const missingFields = requiredFields.filter((field) => !seen.has(field));
+  if (missingFields.length > 0) {
+    throw new Error(
+      `Dataset type ${datasetType} requires schema fields: ${missingFields.join(", ")}`,
+    );
+  }
+};
+
+const validateEvaluatorRequest = (request: CreateEvaluatorRequest) => {
+  ensureNonEmpty(request.name, "Evaluator name");
+  ensureNonEmpty(request.description, "Evaluator description");
+
+  if (!VALID_FAMILIES.has(request.family)) {
+    throw new Error(`Unsupported evaluator family: ${request.family}`);
+  }
+
+  if (!VALID_LAYERS.has(request.layer)) {
+    throw new Error(`Unsupported evaluator layer: ${request.layer}`);
+  }
+
+  if (!VALID_METRIC_TYPES.has(request.metricType)) {
+    throw new Error(`Unsupported metric type: ${request.metricType}`);
+  }
+
+  if (request.family === "code") {
+    if (!request.codeStrategy || !VALID_CODE_STRATEGIES.has(request.codeStrategy)) {
+      throw new Error("Code evaluator requires a valid codeStrategy");
+    }
+  } else if (request.codeStrategy) {
+    throw new Error("Model evaluator cannot define codeStrategy");
+  }
+};
+
 export class EvalLoopService {
   private readonly runner: ExperimentRunner;
 
@@ -53,35 +151,45 @@ export class EvalLoopService {
 
   async seedDefaults(): Promise<LocalStoreSnapshot> {
     const existing = await this.store.load();
+    const { baseline, candidate } = buildSampleExperiments();
+    const comparison = compareExperiments(baseline, candidate);
+    const sampleTraces = [...baseline.caseRuns, ...candidate.caseRuns].map((caseRun) => caseRun.trace);
+    const snapshot: LocalStoreSnapshot = {
+      datasets: existing.datasets.length > 0 ? existing.datasets : sampleDatasets,
+      evaluators: existing.evaluators.length > 0 ? existing.evaluators : sampleEvaluators,
+      prompts: existing.prompts.length > 0 ? existing.prompts : samplePrompts,
+      agents: existing.agents.length > 0 ? existing.agents : sampleAgents,
+      experiments: existing.experiments.length > 0 ? existing.experiments : [baseline, candidate],
+      comparisons: existing.comparisons.length > 0 ? existing.comparisons : [comparison],
+      traces: existing.traces.length > 0 ? existing.traces : sampleTraces,
+    };
+
     if (
-      existing.datasets.length > 0 ||
-      existing.evaluators.length > 0 ||
-      existing.experiments.length > 0 ||
-      existing.comparisons.length > 0
+      snapshot.datasets === existing.datasets &&
+      snapshot.evaluators === existing.evaluators &&
+      snapshot.prompts === existing.prompts &&
+      snapshot.agents === existing.agents &&
+      snapshot.experiments === existing.experiments &&
+      snapshot.comparisons === existing.comparisons &&
+      snapshot.traces === existing.traces
     ) {
       return existing;
     }
-
-    const { baseline, candidate } = buildSampleExperiments();
-    const comparison = compareExperiments(baseline, candidate);
-    const snapshot: LocalStoreSnapshot = {
-      datasets: sampleDatasets,
-      evaluators: sampleEvaluators,
-      experiments: [baseline, candidate],
-      comparisons: [comparison],
-      traces: [...baseline.caseRuns, ...candidate.caseRuns].map((caseRun) => caseRun.trace),
-    };
 
     await this.store.seed(snapshot);
     return snapshot;
   }
 
   async createDataset(request: CreateDatasetRequest): Promise<Dataset> {
+    ensureNonEmpty(request.name, "Dataset name");
+    ensureNonEmpty(request.description, "Dataset description");
+    validateSchema(request.datasetType, request.schema);
+
     const timestamp = now();
     const dataset: Dataset = {
       id: customId("dataset"),
-      name: request.name,
-      description: request.description,
+      name: request.name.trim(),
+      description: request.description.trim(),
       datasetType: request.datasetType,
       schema: request.schema,
       cases: [],
@@ -94,16 +202,64 @@ export class EvalLoopService {
     return dataset;
   }
 
+  async createPrompt(request: CreatePromptRequest): Promise<PromptVersion> {
+    ensureNonEmpty(request.name, "Prompt name");
+    ensureNonEmpty(request.systemPrompt, "Prompt systemPrompt");
+    ensureNonEmpty(request.userTemplate, "Prompt userTemplate");
+
+    const prompt: PromptVersion = {
+      id: customId("prompt"),
+      name: request.name.trim(),
+      version: "0.1.0",
+      description: request.description?.trim(),
+      systemPrompt: request.systemPrompt.trim(),
+      userTemplate: request.userTemplate.trim(),
+      inputSchema: {
+        input: "string",
+      },
+    };
+
+    await this.store.upsertPrompt(prompt);
+    return prompt;
+  }
+
+  async createAgent(request: CreateAgentRequest): Promise<AgentVersion> {
+    ensureNonEmpty(request.name, "Agent name");
+    ensureNonEmpty(request.queryProcessor, "Agent queryProcessor");
+    ensureNonEmpty(request.retriever, "Agent retriever");
+    ensureNonEmpty(request.reranker, "Agent reranker");
+    ensureNonEmpty(request.answerer, "Agent answerer");
+
+    const agent: AgentVersion = {
+      id: customId("agent"),
+      name: request.name.trim(),
+      version: "0.1.0",
+      description: request.description?.trim(),
+      queryProcessor: request.queryProcessor.trim(),
+      retriever: request.retriever.trim(),
+      reranker: request.reranker.trim(),
+      answerer: request.answerer.trim(),
+    };
+
+    await this.store.upsertAgent(agent);
+    return agent;
+  }
+
   async createEvaluator(request: CreateEvaluatorRequest): Promise<Evaluator> {
+    validateEvaluatorRequest(request);
+
     const evaluator: Evaluator = {
       id: customId("evaluator"),
-      name: request.name,
+      name: request.name.trim(),
       layer: request.layer,
       family: request.family,
       metricType: request.metricType,
       version: "0.1.0",
-      description: request.description,
-      config: request.config,
+      description: request.description.trim(),
+      config:
+        request.metricType === "binary"
+          ? { strictBinary: true, ...request.config }
+          : request.config,
       codeStrategy: request.codeStrategy,
     };
 
@@ -128,6 +284,10 @@ export class EvalLoopService {
     baselineExperimentId: string,
     candidateExperimentId: string,
   ): Promise<ExperimentComparison> {
+    if (baselineExperimentId === candidateExperimentId) {
+      throw new Error("Baseline and candidate experiments must be different");
+    }
+
     const baseline = await this.store.getExperiment(baselineExperimentId);
     const candidate = await this.store.getExperiment(candidateExperimentId);
 
@@ -146,6 +306,14 @@ export class EvalLoopService {
 
   async listEvaluators() {
     return this.store.listEvaluators();
+  }
+
+  async listPrompts() {
+    return this.store.listPrompts();
+  }
+
+  async listAgents() {
+    return this.store.listAgents();
   }
 
   async listExperiments() {

@@ -42,10 +42,7 @@ const top1Quality = (actual: string[], expected: string[]): number => {
   return expected.includes(actual[0]!) ? 1 : 0;
 };
 
-const constraintPreservation = (
-  actual: RetrievalCandidate[],
-  evalCase: EvalCase,
-): number => {
+const constraintPreservation = (actual: RetrievalCandidate[], evalCase: EvalCase): number => {
   const constraints = evalCase.queryConstraints;
   if (!constraints) {
     return 1;
@@ -75,10 +72,14 @@ const constraintPreservation = (
     }
 
     if (
-      constraints.inStockOnly &&
-      attrs.inStock !== undefined &&
-      attrs.inStock !== true
+      constraints.deliveryWithinMinutes !== undefined &&
+      typeof attrs.deliveryEtaMin === "number" &&
+      attrs.deliveryEtaMin > constraints.deliveryWithinMinutes
     ) {
+      return false;
+    }
+
+    if (constraints.inStockOnly && attrs.inStock !== undefined && attrs.inStock !== true) {
       return false;
     }
 
@@ -107,11 +108,17 @@ const lexicalOverlap = (left: string, right: string): number => {
   return hitCount / leftTokens.length;
 };
 
-const outputContainsCandidateTitle = (output: string, ids: string[], candidates: RetrievalCandidate[]): boolean => {
-  return candidates
+const outputContainsCandidateTitle = (
+  output: string,
+  ids: string[],
+  candidates: RetrievalCandidate[],
+): boolean =>
+  candidates
     .filter((candidate) => ids.includes(candidate.id))
     .some((candidate) => output.includes(candidate.title));
-};
+
+const average = (values: number[]) =>
+  values.length === 0 ? 0 : Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(4));
 
 export const metricDefinitions: MetricDefinition[] = [
   {
@@ -129,6 +136,13 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "预算、库存、距离等硬约束是否保住",
   },
   {
+    name: "stock_guardrail",
+    layer: "retrieval",
+    metricType: "binary",
+    evaluatorFamily: "model",
+    description: "有库存要求时是否召回了缺货候选",
+  },
+  {
     name: "noise_rate",
     layer: "retrieval",
     metricType: "continuous",
@@ -143,11 +157,11 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "召回结果是否足以支撑后续生成",
   },
   {
-    name: "rerank_hit_at_3",
+    name: "rerank_hit_at_k",
     layer: "rerank",
     metricType: "continuous",
     evaluatorFamily: "model",
-    description: "正确候选是否进入 top-3",
+    description: "正确候选是否进入 top-k",
   },
   {
     name: "rerank_top1_quality",
@@ -162,6 +176,13 @@ export const metricDefinitions: MetricDefinition[] = [
     metricType: "continuous",
     evaluatorFamily: "model",
     description: "重排后硬约束是否仍被满足",
+  },
+  {
+    name: "budget_guardrail",
+    layer: "rerank",
+    metricType: "binary",
+    evaluatorFamily: "model",
+    description: "有预算约束时首位候选是否超预算",
   },
   {
     name: "preference_alignment",
@@ -206,6 +227,13 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "推荐解释质量",
   },
   {
+    name: "clarification_decision",
+    layer: "answer",
+    metricType: "binary",
+    evaluatorFamily: "model",
+    description: "信息不足时是否应主动追问",
+  },
+  {
     name: "proxy_ctr",
     layer: "overall",
     metricType: "continuous",
@@ -220,6 +248,13 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "转化意图代理指标",
   },
   {
+    name: "proxy_dwell_time",
+    layer: "overall",
+    metricType: "continuous",
+    evaluatorFamily: "model",
+    description: "停留时长代理指标",
+  },
+  {
     name: "proxy_satisfaction",
     layer: "overall",
     metricType: "continuous",
@@ -227,7 +262,14 @@ export const metricDefinitions: MetricDefinition[] = [
     description: "满意度代理指标",
   },
   {
-    name: "latency_ms",
+    name: "proxy_trust",
+    layer: "overall",
+    metricType: "continuous",
+    evaluatorFamily: "model",
+    description: "信任代理指标",
+  },
+  {
+    name: "latency",
     layer: "overall",
     metricType: "continuous",
     evaluatorFamily: "model",
@@ -269,6 +311,7 @@ export const metricDefinitions: MetricDefinition[] = [
 
 const binaryResult = (
   metricName: string,
+  layer: MetricResult["layer"],
   score: number,
   reason: string,
   evidence?: string[],
@@ -276,7 +319,7 @@ const binaryResult = (
   if (score !== 0 && score !== 1) {
     return {
       metricName,
-      layer: "answer",
+      layer,
       metricType: "binary",
       score,
       status: "invalid_judgment",
@@ -287,7 +330,7 @@ const binaryResult = (
 
   return {
     metricName,
-    layer: "answer",
+    layer,
     metricType: "binary",
     score,
     status: "success",
@@ -296,14 +339,11 @@ const binaryResult = (
   };
 };
 
-export const evaluateSearchCase = (
-  evalCase: EvalCase,
-  run: ExperimentCaseRun,
-): MetricResult[] => {
-  const retrievalIds = (run.trace.retrievalTrace.outputs.retrievalResult as RetrievalCandidate[]).map(
-    (candidate) => candidate.id,
-  );
-  const rerankCandidates = run.trace.rerankTrace.outputs.rerankResult as RetrievalCandidate[];
+export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): MetricResult[] => {
+  const retrievalCandidates =
+    (run.trace.retrievalTrace.outputs.retrievalResult as RetrievalCandidate[]) ?? [];
+  const retrievalIds = retrievalCandidates.map((candidate) => candidate.id);
+  const rerankCandidates = (run.trace.rerankTrace.outputs.rerankResult as RetrievalCandidate[]) ?? [];
   const rerankIds = rerankCandidates.map((candidate) => candidate.id);
   const answerOutput = String(run.trace.answerTrace.outputs.answerOutput ?? "");
   const relevantIds = [
@@ -311,17 +351,27 @@ export const evaluateSearchCase = (
   ];
 
   const retrievalCoverage = overlapRatio(retrievalIds, evalCase.expectedRetrievalIds);
-  const hardConstraintRecall = constraintPreservation(
-    (run.trace.retrievalTrace.outputs.retrievalResult as RetrievalCandidate[]) ?? [],
-    evalCase,
-  );
+  const hardConstraintRecall = constraintPreservation(retrievalCandidates, evalCase);
+  const stockGuardrailScore =
+    evalCase.queryConstraints?.inStockOnly === true &&
+    retrievalCandidates.some((candidate) => candidate.attributes?.inStock === false)
+      ? 0
+      : 1;
   const noiseRate = computeNoiseRate(retrievalIds, relevantIds);
   const evidenceSufficiency =
-    retrievalCoverage >= 1 && hardConstraintRecall >= 0.8 ? 1 : Number(((retrievalCoverage + hardConstraintRecall) / 2).toFixed(4));
+    retrievalCoverage >= 1 && hardConstraintRecall >= 0.8
+      ? 1
+      : Number(((retrievalCoverage + hardConstraintRecall) / 2).toFixed(4));
 
-  const rerankHitAt3 = topKHit(rerankIds, evalCase.expectedTopItems, 3);
+  const rerankHitAtK = topKHit(rerankIds, evalCase.expectedTopItems, 3);
   const rerankTop1 = top1Quality(rerankIds, evalCase.expectedTopItems);
   const rerankConstraintPreservation = constraintPreservation(rerankCandidates, evalCase);
+  const topRerankPrice = Number(rerankCandidates[0]?.attributes?.price ?? 0);
+  const budgetGuardrailScore =
+    evalCase.queryConstraints?.budgetMax !== undefined &&
+    topRerankPrice > evalCase.queryConstraints.budgetMax
+      ? 0
+      : 1;
   const preferenceAlignment = overlapRatio(rerankIds.slice(0, 3), evalCase.expectedTopItems);
 
   const lexicalCorrectness = lexicalOverlap(answerOutput, evalCase.answerReference);
@@ -333,6 +383,7 @@ export const evaluateSearchCase = (
   const rawBinaryScore = lexicalCorrectness > 0.45 || mentionsTopItem ? 1 : 0;
   const answerCorrectness = binaryResult(
     "answer_correctness",
+    "answer",
     rawBinaryScore,
     rawBinaryScore === 1 ? "答案命中参考关键信息" : "答案未命中参考关键信息",
     evalCase.expectedTopItems,
@@ -340,7 +391,9 @@ export const evaluateSearchCase = (
 
   const answerGroundedness = Number(
     (
-      rerankCandidates.filter((candidate) => answerOutput.includes(candidate.title)).length /
+      rerankCandidates.filter((candidate) =>
+        answerOutput.trim().toLowerCase().includes(candidate.title.trim().toLowerCase()),
+      ).length /
       Math.max(1, Math.min(3, rerankCandidates.length))
     ).toFixed(4),
   );
@@ -353,16 +406,25 @@ export const evaluateSearchCase = (
   const explanationQuality = Number(
     ((lexicalCorrectness + answerGroundedness + answerActionability) / 3).toFixed(4),
   );
+  const clarificationDecisionScore = evidenceSufficiency < 0.5 && !mentionsTopItem ? 1 : 0;
 
   const proxyCtr = Number(
     ((preferenceAlignment + answerConciseness + answerGroundedness) / 3).toFixed(4),
   );
   const proxyCvr = Number(
-    ((rerankHitAt3 + answerActionability + explanationQuality) / 3).toFixed(4),
+    ((rerankHitAtK + answerActionability + explanationQuality) / 3).toFixed(4),
+  );
+  const proxyDwellTime = Number(
+    ((answerConciseness + explanationQuality + answerActionability) / 3).toFixed(4),
   );
   const proxySatisfaction = Number(
     ((retrievalCoverage + rerankConstraintPreservation + lexicalCorrectness) / 3).toFixed(4),
   );
+  const proxyTrust = average([
+    answerGroundedness,
+    rawBinaryScore,
+    clarificationDecisionScore === 1 ? 1 : mentionsTopItem ? 1 : 0.6,
+  ]);
   const latencyMs =
     run.trace.retrievalTrace.latencyMs +
     run.trace.rerankTrace.latencyMs +
@@ -386,6 +448,12 @@ export const evaluateSearchCase = (
       status: "success",
       reason: "召回约束保持率",
     },
+    binaryResult(
+      "stock_guardrail",
+      "retrieval",
+      stockGuardrailScore,
+      stockGuardrailScore === 1 ? "未发现缺货候选进入召回结果" : "召回结果包含缺货候选",
+    ),
     {
       metricName: "noise_rate",
       layer: "retrieval",
@@ -403,12 +471,12 @@ export const evaluateSearchCase = (
       reason: "召回结果是否足以支撑生成",
     },
     {
-      metricName: "rerank_hit_at_3",
+      metricName: "rerank_hit_at_k",
       layer: "rerank",
       metricType: "continuous",
-      score: rerankHitAt3,
+      score: rerankHitAtK,
       status: "success",
-      reason: "top-3 命中关键候选情况",
+      reason: "top-k 命中关键候选情况",
       evidence: evalCase.expectedTopItems,
     },
     {
@@ -427,6 +495,12 @@ export const evaluateSearchCase = (
       status: "success",
       reason: "重排后保留硬约束能力",
     },
+    binaryResult(
+      "budget_guardrail",
+      "rerank",
+      budgetGuardrailScore,
+      budgetGuardrailScore === 1 ? "首位候选未超预算" : "首位候选超出预算约束",
+    ),
     {
       metricName: "preference_alignment",
       layer: "rerank",
@@ -468,6 +542,12 @@ export const evaluateSearchCase = (
       status: "success",
       reason: "推荐解释质量",
     },
+    binaryResult(
+      "clarification_decision",
+      "answer",
+      clarificationDecisionScore,
+      clarificationDecisionScore === 1 ? "当前证据不足，系统应主动追问" : "当前证据足够，系统可直接回答",
+    ),
     {
       metricName: "proxy_ctr",
       layer: "overall",
@@ -485,6 +565,14 @@ export const evaluateSearchCase = (
       reason: "转化意图离线代理指标",
     },
     {
+      metricName: "proxy_dwell_time",
+      layer: "overall",
+      metricType: "continuous",
+      score: proxyDwellTime,
+      status: "success",
+      reason: "停留时长离线代理指标",
+    },
+    {
       metricName: "proxy_satisfaction",
       layer: "overall",
       metricType: "continuous",
@@ -493,7 +581,15 @@ export const evaluateSearchCase = (
       reason: "满意度离线代理指标",
     },
     {
-      metricName: "latency_ms",
+      metricName: "proxy_trust",
+      layer: "overall",
+      metricType: "continuous",
+      score: proxyTrust,
+      status: "success",
+      reason: "用户信任离线代理指标",
+    },
+    {
+      metricName: "latency",
       layer: "overall",
       metricType: "continuous",
       score: latencyMs,
@@ -509,12 +605,22 @@ export const builtInEvaluators: Evaluator[] = metricDefinitions.map((metric) => 
   layer: metric.layer,
   family: metric.evaluatorFamily,
   metricType: metric.metricType,
-  version: "0.1.0",
+  version: "0.2.0",
   description: metric.description,
   config:
     metric.evaluatorFamily === "code"
-      ? { strategy: metric.codeStrategy ?? "exact_match" }
-      : { strictBinary: metric.metricType === "binary" },
+      ? {
+          judgeType: "code",
+          domainScope: ["food_delivery", "grocery"],
+          strategy: metric.codeStrategy ?? "python_script",
+          ruleName: metric.name,
+        }
+      : {
+          judgeType: "llm",
+          domainScope: ["food_delivery", "grocery"],
+          rubric: metric.description,
+          strictBinary: metric.metricType === "binary",
+        },
   codeStrategy: metric.codeStrategy,
 }));
 

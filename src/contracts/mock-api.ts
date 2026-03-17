@@ -1,5 +1,11 @@
 import { compareExperiments } from "../domain/comparison.js";
-import { buildSampleExperiments, sampleDatasets, sampleEvaluators } from "../domain/sample-data.js";
+import {
+  buildSampleExperiments,
+  sampleAgents,
+  sampleDatasets,
+  sampleEvaluators,
+  samplePrompts,
+} from "../domain/sample-data.js";
 import { TraceRun } from "../domain/types.js";
 import {
   BootstrapPayload,
@@ -31,6 +37,12 @@ export const createMockEvalLoopApi = (): EvalLoopApi => {
     },
     async listEvaluators() {
       return sampleEvaluators;
+    },
+    async listPrompts() {
+      return samplePrompts;
+    },
+    async listAgents() {
+      return sampleAgents;
     },
     async listExperiments() {
       return [baseline, candidate];

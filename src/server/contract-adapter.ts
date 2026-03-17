@@ -4,6 +4,7 @@ import type {
   DatasetRecord,
   EvaluatorRecord,
   ExperimentRunRecord,
+  LayerInsightRecord,
   MetricDeltaRecord,
   MetricScoreRecord,
   SearchPipelineVersionRecord,
@@ -174,11 +175,27 @@ const toAttributionRecord = (
   evidence_case_ids: attribution.evidenceCaseIds,
 });
 
+const toLayerInsightRecord = (
+  insight: ExperimentComparison["layerInsights"][number],
+): LayerInsightRecord => ({
+  layer: normalizeLayer(insight.layer),
+  status: insight.status,
+  average_delta: insight.averageDelta,
+  strongest_negative_metric: insight.strongestNegativeMetric,
+  strongest_positive_metric: insight.strongestPositiveMetric,
+  evidence_case_ids: insight.evidenceCaseIds,
+});
+
 export const toComparisonRecord = (comparison: ExperimentComparison) => ({
+  headline: comparison.headline,
   baseline_run_id: comparison.baselineExperimentId,
   candidate_run_id: comparison.candidateExperimentId,
   overall_metrics: comparison.overallDeltas.map(toMetricDeltaRecord),
   layer_deltas: comparison.layerDeltas.map(toMetricDeltaRecord),
+  layer_insights: comparison.layerInsights.map(toLayerInsightRecord),
+  driver_positive: comparison.driverPositive,
+  driver_negative: comparison.driverNegative,
+  confidence: comparison.confidence,
   root_cause_summary: comparison.rootCauseSummary,
   evidence_case_ids: comparison.evidenceCaseIds,
   attribution_records: comparison.attributionRecords.map(toAttributionRecord),

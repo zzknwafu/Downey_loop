@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
+import { sampleDatasets } from "../src/domain/sample-data.js";
 import type { AppConfig } from "../src/server/config.js";
 import { LocalStore } from "../src/server/storage/local-store.js";
 
@@ -34,7 +35,7 @@ describe("local store", () => {
     const store = new LocalStore(await createConfig());
     const initialState = await store.getState();
 
-    expect(initialState.datasets).toHaveLength(3);
+    expect(initialState.datasets).toHaveLength(sampleDatasets.length + 2);
     expect(initialState.evaluators.length).toBeGreaterThan(0);
 
     const dataset = await store.createDataset({

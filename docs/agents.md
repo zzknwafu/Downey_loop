@@ -11,6 +11,8 @@ Date: 2026-03-17
 - Agent 2：Frontend
 - Agent 3：Infra / Integration
 
+当前阶段最重要的不是继续扩功能，而是锁死共享核心的 ownership，避免多个 agent 同时修改同一层定义。
+
 三者都必须遵守同一份事实来源：
 
 - [docs/prd.md](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd.md)
@@ -32,6 +34,7 @@ Date: 2026-03-17
 - root-cause analysis
 - 二值指标合法性约束
 - 分层结果结构定义
+- 共享核心文件 owner
 
 ### In Scope
 
@@ -40,12 +43,21 @@ Date: 2026-03-17
 - evaluator family / metric type 约束
 - ExperimentRun / CaseResult / TraceRun / ABExperiment
 - ExperimentRunJob / CaseRunJob 规则层
+- `src/domain/types.ts`
+- `src/domain/evaluators.ts`
+- `src/domain/comparison.ts`
+- `src/domain/root-cause.ts`
+- `src/domain/experiment.ts`
 
 ### Out of Scope
 
 - 页面视觉细节
 - 弹窗和列表展示
 - `.env`、SQLite、启动脚本收口
+- `src/server/*`
+- `src/contracts/*`
+- `src/shared/contracts.ts`
+- `src/web/*`
 
 ### Rules
 
@@ -91,6 +103,12 @@ Date: 2026-03-17
 - 修改数据集类型
 - 修改评估器类型
 - 定义后端接口 shape
+- 修改 `src/domain/types.ts`
+- 修改 `src/domain/evaluators.ts`
+- 修改 `src/domain/comparison.ts`
+- 修改 `src/domain/root-cause.ts`
+- 修改 `src/shared/contracts.ts`
+- 修改 `src/server/*`
 
 ### Rules
 
@@ -127,12 +145,17 @@ Date: 2026-03-17
 
 ### In Scope
 
-- 共享 types 的收口
 - mock API / contract
 - 本地存储适配层
 - 配置读取层
 - 统一 dev/build/start 方式
 - 前后端联调说明
+- `src/contracts/*`
+- `src/server/*`
+- `src/infra/*`
+- `src/shared/contracts.ts`
+- `src/shared/mock-data.ts`
+- `src/web/api.ts`
 
 ### Out of Scope
 
@@ -140,6 +163,10 @@ Date: 2026-03-17
 - 修改页面交互逻辑
 - 发明新业务指标
 - 擅自扩展领域命名
+- 修改 `src/domain/types.ts`
+- 修改 `src/domain/evaluators.ts`
+- 修改 `src/domain/comparison.ts`
+- 修改 `src/domain/root-cause.ts`
 
 ### Rules
 
@@ -166,7 +193,53 @@ Date: 2026-03-17
 - 交互与展示归 Agent 2
 - API 收口、联调和运行方式归 Agent 3
 
-### 5.3 Escalation Rule
+### 5.3 Critical File Ownership
+
+以下文件必须指定单一 owner，其他 agent 不得直接修改：
+
+- Agent 1 only
+  - `src/domain/types.ts`
+  - `src/domain/evaluators.ts`
+  - `src/domain/comparison.ts`
+  - `src/domain/root-cause.ts`
+  - `src/domain/experiment.ts`
+  - `tests/search-evals.test.ts`
+
+- Agent 3 only
+  - `src/contracts/api.ts`
+  - `src/contracts/mock-api.ts`
+  - `src/server/contract-adapter.ts`
+  - `src/server/index.ts`
+  - `src/infra/store.ts`
+  - `src/infra/config.ts`
+  - `src/shared/contracts.ts`
+  - `src/shared/mock-data.ts`
+  - `tests/local-store.test.ts`
+  - `tests/runner-infra.test.ts`
+
+- Agent 2 only
+  - `src/web/App.tsx`
+  - `src/web/styles.css`
+  - `src/web/view-model.ts`
+  - `src/web/api.ts` 的消费端逻辑
+
+说明：
+
+- Agent 2 只能消费共享 contract，不定义领域对象
+- Agent 3 只能适配 domain 到 contract，不修改 domain 定义
+- 任何对共享核心文件的修改，都必须由 Agent 1 收口
+
+### 5.4 Current Conflict Audit
+
+当前工作区已经出现过典型冲突信号：
+
+- `src/domain/evaluators.ts` 一度被删除，同时仍被 domain / tests / auto-debug 依赖
+- `src/domain/types.ts`、`src/domain/comparison.ts`、`tests/search-evals.test.ts` 同时被多线程改动
+- `src/shared/contracts.ts`、`src/server/contract-adapter.ts`、`src/web/view-model.ts` 与 domain 命名存在耦合，极易被“顺手改掉”
+
+这些都属于共享核心被多线程同时触碰的表现。后续必须按 owner 表执行。
+
+### 5.5 Escalation Rule
 
 出现以下情况时，应回到主 agent 收口：
 
@@ -175,6 +248,22 @@ Date: 2026-03-17
 - 需要修改模块命名
 - 需要修改实验结果结构
 - 需要修改 evaluator 合法性规则
+- 需要修改任何 `Critical File Ownership` 中声明为别的 agent 所有的文件
+
+### 5.6 Change Protocol
+
+所有 agent 按下面的协议协作：
+
+1. 先看 owner
+2. 如果文件不归自己，停止修改
+3. 把变更需求回抛给 owner
+4. owner 修改后，其他 agent 只跟进适配层
+
+禁止行为：
+
+- Agent 2 为了页面方便，直接改 domain types
+- Agent 3 为了接口方便，直接改 evaluator 指标名
+- Agent 1 为了临时跑通 UI，长期占用前端页面层
 
 ## 6. Suggested Parallel Start
 

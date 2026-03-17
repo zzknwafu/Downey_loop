@@ -70,10 +70,19 @@ export const buildLayerInsights = (
 export const buildRootCauseSummary = (
   overallDeltas: MetricDelta[],
   layerDeltas: MetricDelta[],
+  evidenceByLayer: Record<"retrieval" | "rerank" | "answer", string[]>,
   evidenceCaseIds: string[],
-): { summary: string[]; attributions: AttributionRecord[] } => {
+): {
+  headline: string;
+  summary: string[];
+  attributions: AttributionRecord[];
+  driverPositive: string[];
+  driverNegative: string[];
+  confidence: number;
+} => {
   const summary: string[] = [];
   const attributions: AttributionRecord[] = [];
+  let headline = "Layer metrics are stable, but case-level trace review is still recommended";
   const proxyCvrDelta = overallDeltas.find((delta) => delta.metricName === "proxy_cvr");
 
   if (proxyCvrDelta) {
@@ -82,12 +91,28 @@ export const buildRootCauseSummary = (
   }
 
   const retrievalCoverageDelta = layerDeltas.find((delta) => delta.metricName === "retrieval_coverage");
-  const rerankDelta = layerDeltas.find((delta) => delta.metricName === "rerank_hit_at_3");
+  const stockGuardrailDelta = layerDeltas.find((delta) => delta.metricName === "stock_guardrail");
+  const rerankDelta = layerDeltas.find((delta) => delta.metricName === "rerank_hit_at_k");
+  const budgetGuardrailDelta = layerDeltas.find((delta) => delta.metricName === "budget_guardrail");
   const answerGroundednessDelta = layerDeltas.find((delta) => delta.metricName === "answer_groundedness");
   const answerConcisenessDelta = layerDeltas.find((delta) => delta.metricName === "answer_conciseness");
   const answerActionabilityDelta = layerDeltas.find((delta) => delta.metricName === "answer_actionability");
+  const proxyTrustDelta = overallDeltas.find((delta) => delta.metricName === "proxy_trust");
+  const proxyDwellDelta = overallDeltas.find((delta) => delta.metricName === "proxy_dwell_time");
 
-  if (retrievalCoverageDelta && retrievalCoverageDelta.delta <= -0.08) {
+  if (stockGuardrailDelta && stockGuardrailDelta.delta <= -0.08) {
+    headline = "Retrieval stock guardrail regression is the primary driver of overall drop";
+    summary.push("主要负向驱动是 retrieval 层召回了缺货候选，破坏了有库存约束的搜索体验");
+    attributions.push({
+      targetMetric: "proxy_trust",
+      candidateDriver: "stock_guardrail",
+      layer: "retrieval",
+      delta: stockGuardrailDelta.delta,
+      confidence: 0.88,
+      evidenceCaseIds: evidenceByLayer.retrieval,
+    });
+  } else if (retrievalCoverageDelta && retrievalCoverageDelta.delta <= -0.08) {
+    headline = "Retrieval regression is the primary driver of overall drop";
     summary.push("主要负向驱动是 retrieval coverage 下降，关键候选未被稳定召回");
     attributions.push({
       targetMetric: "proxy_cvr",
@@ -95,22 +120,35 @@ export const buildRootCauseSummary = (
       layer: "retrieval",
       delta: retrievalCoverageDelta.delta,
       confidence: 0.86,
-      evidenceCaseIds,
+      evidenceCaseIds: evidenceByLayer.retrieval,
     });
-  } else if (rerankDelta && rerankDelta.delta <= -0.08) {
-    summary.push("主要负向驱动是 rerank top-3 命中下降，优质候选未进入最终答案");
+  } else if (budgetGuardrailDelta && budgetGuardrailDelta.delta <= -0.08) {
+    headline = "Rerank budget guardrail regression is the primary driver of overall drop";
+    summary.push("主要负向驱动是 rerank 首位候选超预算，导致推荐结果偏离用户硬约束");
     attributions.push({
       targetMetric: "proxy_cvr",
-      candidateDriver: "rerank_hit_at_3",
+      candidateDriver: "budget_guardrail",
+      layer: "rerank",
+      delta: budgetGuardrailDelta.delta,
+      confidence: 0.84,
+      evidenceCaseIds: evidenceByLayer.rerank,
+    });
+  } else if (rerankDelta && rerankDelta.delta <= -0.08) {
+    headline = "Rerank regression is the primary driver of overall drop";
+    summary.push("主要负向驱动是 rerank hit@k 下降，优质候选未进入最终答案");
+    attributions.push({
+      targetMetric: "proxy_cvr",
+      candidateDriver: "rerank_hit_at_k",
       layer: "rerank",
       delta: rerankDelta.delta,
       confidence: 0.82,
-      evidenceCaseIds,
+      evidenceCaseIds: evidenceByLayer.rerank,
     });
   } else if (
     (answerGroundednessDelta && answerGroundednessDelta.delta <= -0.08) ||
     (answerActionabilityDelta && answerActionabilityDelta.delta <= -0.08)
   ) {
+    headline = "Answer regression is the primary driver of overall drop";
     summary.push("主要负向驱动是 answer 层质量下降，回答缺少依据或不利于用户决策");
     attributions.push({
       targetMetric: "proxy_cvr",
@@ -121,8 +159,10 @@ export const buildRootCauseSummary = (
       layer: "answer",
       delta: answerGroundednessDelta?.delta ?? answerActionabilityDelta?.delta ?? 0,
       confidence: 0.8,
-      evidenceCaseIds,
+      evidenceCaseIds: evidenceByLayer.answer,
     });
+  } else if (proxyCvrDelta && proxyCvrDelta.delta > 0.05) {
+    headline = "Candidate improves conversion proxy without a dominant regression signal";
   }
 
   if (answerConcisenessDelta && answerConcisenessDelta.delta <= -0.08) {
@@ -133,7 +173,7 @@ export const buildRootCauseSummary = (
       layer: "answer",
       delta: answerConcisenessDelta.delta,
       confidence: 0.74,
-      evidenceCaseIds,
+      evidenceCaseIds: evidenceByLayer.answer,
     });
   }
 
@@ -141,9 +181,39 @@ export const buildRootCauseSummary = (
     summary.push(`证据样本：${evidenceCaseIds.join(", ")}`);
   }
 
+  if (proxyTrustDelta && proxyTrustDelta.delta > 0.05) {
+    summary.push("实验组的 trust proxy 上升，说明回答依据性或风险控制有所改善");
+  }
+
+  if (stockGuardrailDelta && stockGuardrailDelta.delta > 0.05) {
+    summary.push("实验组在库存护栏上更稳，说明缺货候选被更好地拦截");
+  }
+
+  if (budgetGuardrailDelta && budgetGuardrailDelta.delta > 0.05) {
+    summary.push("实验组在预算护栏上更稳，说明首位推荐更少超出预算");
+  }
+
+  if (proxyDwellDelta && proxyDwellDelta.delta > 0.05) {
+    summary.push("实验组的 dwell proxy 上升，说明用户停留和阅读意愿更强");
+  }
+
   if (summary.length === 0) {
     summary.push("整体差异较小，但建议继续下钻单 case 和 trace 检查层级波动");
   }
 
-  return { summary, attributions };
+  const driverNegative = [...new Set(attributions.filter((item) => item.delta < 0).map((item) => item.candidateDriver))];
+  const driverPositive = [...new Set(attributions.filter((item) => item.delta > 0).map((item) => item.candidateDriver))];
+  const confidence =
+    attributions.length > 0
+      ? Number((attributions.reduce((sum, item) => sum + item.confidence, 0) / attributions.length).toFixed(2))
+      : 0.5;
+
+  return {
+    headline,
+    summary,
+    attributions,
+    driverPositive,
+    driverNegative,
+    confidence,
+  };
 };

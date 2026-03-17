@@ -219,6 +219,7 @@ const mapIdealDatasetCases = (datasets: DatasetRecord[]): EvalCase[] => {
 const mapComparison = (
   abExperiment: BootstrapResponse["data"]["ab_experiment"],
 ): ExperimentComparison => ({
+  headline: abExperiment.headline,
   baselineExperimentId: abExperiment.baseline_run_id,
   candidateExperimentId: abExperiment.candidate_run_id,
   overallDeltas: abExperiment.overall_metrics.map((metric) => ({
@@ -235,6 +236,17 @@ const mapComparison = (
     candidateValue: metric.candidate_value,
     delta: metric.delta,
   })),
+  layerInsights: abExperiment.layer_insights.map((insight) => ({
+    layer: insight.layer,
+    status: insight.status,
+    averageDelta: insight.average_delta,
+    strongestNegativeMetric: insight.strongest_negative_metric,
+    strongestPositiveMetric: insight.strongest_positive_metric,
+    evidenceCaseIds: insight.evidence_case_ids,
+  })),
+  driverPositive: abExperiment.driver_positive,
+  driverNegative: abExperiment.driver_negative,
+  confidence: abExperiment.confidence,
   rootCauseSummary: abExperiment.root_cause_summary,
   evidenceCaseIds: abExperiment.evidence_case_ids,
   attributionRecords: abExperiment.attribution_records.map((record) => ({

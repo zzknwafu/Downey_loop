@@ -1,0 +1,147 @@
+{
+  "extracted_at": "2026-03-17T02:51:03.746Z",
+  "source_repo_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop",
+  "source_repo_url": "https://github.com/coze-dev/coze-loop",
+  "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss",
+  "summary": {
+    "raw_asset_count": 14,
+    "evaluator_template_count": 26,
+    "llm_template_count": 21,
+    "code_template_count": 5
+  },
+  "findings": [
+    "OSS repo contains built-in evaluator prompt templates and code evaluator templates.",
+    "OSS repo includes dataset/prompt related SQL schemas and service code.",
+    "No ready-made business dataset rows or prompt rows were found in the published SQL bootstrap files copied here."
+  ],
+  "raw_assets": [
+    {
+      "kind": "config",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/conf/evaluation.yaml",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/conf/evaluation.yaml",
+      "bytes": 105986,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "config",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/conf/prompt.yaml",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/conf/prompt.yaml",
+      "bytes": 736,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/evaluator_template.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/evaluator_template.sql",
+      "bytes": 63202,
+      "has_insert_statements": true
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset.sql",
+      "bytes": 2278,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset_item.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset_item.sql",
+      "bytes": 2309,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset_schema.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset_schema.sql",
+      "bytes": 1128,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset_version.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset_version.sql",
+      "bytes": 1745,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset_item_snapshot.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset_item_snapshot.sql",
+      "bytes": 2108,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/dataset_io_job.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/dataset_io_job.sql",
+      "bytes": 2286,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/prompt_basic.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/prompt_basic.sql",
+      "bytes": 1864,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/prompt_commit.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/prompt_commit.sql",
+      "bytes": 2135,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/prompt_user_draft.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/prompt_user_draft.sql",
+      "bytes": 2096,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/prompt_label.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/prompt_label.sql",
+      "bytes": 1178,
+      "has_insert_statements": false
+    },
+    {
+      "kind": "sql",
+      "source_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/.cache/coze-loop/release/deployment/docker-compose/bootstrap/mysql-init/init-sql/prompt_relation.sql",
+      "output_path": "/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/artifacts/coze-loop-oss/raw/bootstrap/mysql-init/init-sql/prompt_relation.sql",
+      "bytes": 1237,
+      "has_insert_statements": false
+    }
+  ],
+  "llm_template_names": [
+    "相关性",
+    "简洁性",
+    "正确性",
+    "幻觉现象",
+    "有害性",
+    "恶意性",
+    "有益性",
+    "争议性",
+    "性别歧视性",
+    "犯罪性",
+    "不敏感性",
+    "深度性",
+    "创造性",
+    "细节性",
+    "工具选择质量",
+    "工具参数正确性",
+    "Agent 任务完成度",
+    "Agent 轨迹质量",
+    "参考答案遵从度",
+    "指令遵从度",
+    "图片理解"
+  ],
+  "code_template_names": [
+    "文本包含判断",
+    "文本正则匹配",
+    "文本起始子串判断",
+    "JSON格式校验",
+    "文本等值判断"
+  ]
+}

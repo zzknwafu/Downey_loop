@@ -186,11 +186,27 @@ export interface AttributionRecord {
   evidence_case_ids: string[];
 }
 
+export type LayerHealthStatus = "healthy" | "warning" | "regressed";
+
+export interface LayerInsightRecord {
+  layer: LayerName;
+  status: LayerHealthStatus;
+  average_delta: number;
+  strongest_negative_metric?: string;
+  strongest_positive_metric?: string;
+  evidence_case_ids: string[];
+}
+
 export interface AbExperimentRecord {
+  headline: string;
   baseline_run_id: string;
   candidate_run_id: string;
   overall_metrics: MetricDeltaRecord[];
   layer_deltas: MetricDeltaRecord[];
+  layer_insights: LayerInsightRecord[];
+  driver_positive: string[];
+  driver_negative: string[];
+  confidence: number;
   root_cause_summary: string[];
   evidence_case_ids: string[];
   attribution_records: AttributionRecord[];

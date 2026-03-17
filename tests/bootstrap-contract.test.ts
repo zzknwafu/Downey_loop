@@ -1,14 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { createSeedSnapshot } from "../src/shared/mock-data.js";
+import { sampleCases, sampleDatasets } from "../src/domain/sample-data.js";
 
 describe("bootstrap contract", () => {
   it("provides the minimal dataset/evaluator/experiment/trace loop", () => {
     const snapshot = createSeedSnapshot();
 
-    expect(snapshot.datasets).toHaveLength(3);
+    expect(snapshot.datasets).toHaveLength(sampleDatasets.length + 2);
     expect(snapshot.evaluators.length).toBeGreaterThan(0);
     expect(snapshot.experiments).toHaveLength(2);
-    expect(snapshot.traces).toHaveLength(4);
+    expect(snapshot.traces).toHaveLength(sampleCases.length * 2);
     expect(snapshot.ab_experiment.baseline_run_id).toBe("experiment_run_baseline");
     expect(snapshot.ab_experiment.candidate_run_id).toBe("experiment_run_candidate");
   });

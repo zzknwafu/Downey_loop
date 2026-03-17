@@ -65,10 +65,14 @@ describe("runner and infra", () => {
   it("exposes a stable mock api contract for frontend and integration", async () => {
     const api = createMockEvalLoopApi();
     const bootstrap = await api.bootstrap();
+    const prompts = await api.listPrompts();
+    const agents = await api.listAgents();
 
     expect(bootstrap.datasets.length).toBeGreaterThan(0);
     expect(bootstrap.evaluators.length).toBeGreaterThan(0);
     expect(bootstrap.experiments.length).toBeGreaterThan(0);
     expect(bootstrap.comparison.rootCauseSummary.length).toBeGreaterThan(0);
+    expect(prompts.length).toBeGreaterThan(0);
+    expect(agents.length).toBeGreaterThan(0);
   });
 });

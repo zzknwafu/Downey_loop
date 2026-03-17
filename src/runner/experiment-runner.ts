@@ -93,6 +93,11 @@ export class ExperimentRunner {
     const experiment = createEmptyExperimentRun(experimentId, input.target, {
       datasetId: input.dataset.id,
       evaluatorIds: input.evaluators.map((item) => item.id),
+      targetRef: {
+        id: input.target.id,
+        type: "agent",
+        version: input.target.version,
+      },
       pipelineVersionId: input.target.id,
       status: job.status === "completed" ? "FINISHED" : "FAILED",
       startedAt: job.startedAt,

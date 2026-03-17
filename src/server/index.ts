@@ -271,21 +271,25 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
-    sendJson(res, 201, {
-      item: toDatasetRecord(
-        await service.createDataset({
-          name: payload.name,
-          description: payload.description,
-          datasetType: payload.dataset_type,
-          schema: payload.schema.map((field) => ({
-            name: field.name,
-            dataType: field.data_type,
-            required: field.required,
-            description: field.description,
-          })),
-        }),
-      ),
-    });
+    try {
+      sendJson(res, 201, {
+        item: toDatasetRecord(
+          await service.createDataset({
+            name: payload.name,
+            description: payload.description,
+            datasetType: payload.dataset_type,
+            schema: payload.schema.map((field) => ({
+              name: field.name,
+              dataType: field.data_type,
+              required: field.required,
+              description: field.description,
+            })),
+          }),
+        ),
+      });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset payload");
+    }
     return true;
   }
 
@@ -301,19 +305,23 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
-    sendJson(res, 201, {
-      item: toEvaluatorRecord(
-        await service.createEvaluator({
-          name: payload.name,
-          description: payload.description,
-          family: payload.family,
-          layer: payload.layer,
-          metricType: payload.metric_type,
-          codeStrategy: payload.code_strategy,
-          config: payload.config,
-        }),
-      ),
-    });
+    try {
+      sendJson(res, 201, {
+        item: toEvaluatorRecord(
+          await service.createEvaluator({
+            name: payload.name,
+            description: payload.description,
+            family: payload.family,
+            layer: payload.layer,
+            metricType: payload.metric_type,
+            codeStrategy: payload.code_strategy,
+            config: payload.config,
+          }),
+        ),
+      });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid evaluator payload");
+    }
     return true;
   }
 
@@ -329,21 +337,25 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
-    const experiment = await service.runExperiment({
-      datasetId: payload.dataset_id,
-      evaluatorIds: payload.evaluator_ids,
-      target: {
-        id: payload.pipeline_version.id,
-        name: payload.pipeline_version.name,
-        version: payload.pipeline_version.version,
-        queryProcessor: payload.pipeline_version.query_processor,
-        retriever: payload.pipeline_version.retriever,
-        reranker: payload.pipeline_version.reranker,
-        answerer: payload.pipeline_version.answerer,
-      },
-    });
+    try {
+      const experiment = await service.runExperiment({
+        datasetId: payload.dataset_id,
+        evaluatorIds: payload.evaluator_ids,
+        target: {
+          id: payload.pipeline_version.id,
+          name: payload.pipeline_version.name,
+          version: payload.pipeline_version.version,
+          queryProcessor: payload.pipeline_version.query_processor,
+          retriever: payload.pipeline_version.retriever,
+          reranker: payload.pipeline_version.reranker,
+          answerer: payload.pipeline_version.answerer,
+        },
+      });
 
-    sendJson(res, 201, { item: toExperimentRunRecord(experiment) });
+      sendJson(res, 201, { item: toExperimentRunRecord(experiment) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid experiment payload");
+    }
     return true;
   }
 
@@ -365,12 +377,16 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
-    const comparison = await service.compareExperimentRuns(
-      payload.baseline_run_id,
-      payload.candidate_run_id,
-    );
+    try {
+      const comparison = await service.compareExperimentRuns(
+        payload.baseline_run_id,
+        payload.candidate_run_id,
+      );
 
-    sendJson(res, 201, { item: toComparisonRecord(comparison) });
+      sendJson(res, 201, { item: toComparisonRecord(comparison) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid comparison payload");
+    }
     return true;
   }
 

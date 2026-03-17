@@ -1,10 +1,21 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
-import { Dataset, Evaluator, ExperimentComparison, ExperimentRun, LocalStoreSnapshot, TraceRun } from "../domain/types.js";
+import {
+  AgentVersion,
+  Dataset,
+  Evaluator,
+  ExperimentComparison,
+  ExperimentRun,
+  LocalStoreSnapshot,
+  PromptVersion,
+  TraceRun,
+} from "../domain/types.js";
 
 const emptySnapshot = (): LocalStoreSnapshot => ({
   datasets: [],
   evaluators: [],
+  prompts: [],
+  agents: [],
   experiments: [],
   comparisons: [],
   traces: [],
@@ -45,6 +56,18 @@ export class FileBackedLocalStore {
     await this.save(snapshot);
   }
 
+  async upsertPrompt(prompt: PromptVersion): Promise<void> {
+    const snapshot = await this.load();
+    snapshot.prompts = upsertById(snapshot.prompts, prompt);
+    await this.save(snapshot);
+  }
+
+  async upsertAgent(agent: AgentVersion): Promise<void> {
+    const snapshot = await this.load();
+    snapshot.agents = upsertById(snapshot.agents, agent);
+    await this.save(snapshot);
+  }
+
   async upsertExperiment(experiment: ExperimentRun): Promise<void> {
     const snapshot = await this.load();
     snapshot.experiments = upsertById(snapshot.experiments, experiment, "experimentId");
@@ -66,6 +89,16 @@ export class FileBackedLocalStore {
   async listEvaluators(): Promise<Evaluator[]> {
     const snapshot = await this.load();
     return snapshot.evaluators;
+  }
+
+  async listPrompts(): Promise<PromptVersion[]> {
+    const snapshot = await this.load();
+    return snapshot.prompts;
+  }
+
+  async listAgents(): Promise<AgentVersion[]> {
+    const snapshot = await this.load();
+    return snapshot.agents;
   }
 
   async listExperiments(): Promise<ExperimentRun[]> {
@@ -91,6 +124,16 @@ export class FileBackedLocalStore {
   async getEvaluator(id: string): Promise<Evaluator | undefined> {
     const snapshot = await this.load();
     return snapshot.evaluators.find((evaluator) => evaluator.id === id);
+  }
+
+  async getPrompt(id: string): Promise<PromptVersion | undefined> {
+    const snapshot = await this.load();
+    return snapshot.prompts.find((prompt) => prompt.id === id);
+  }
+
+  async getAgent(id: string): Promise<AgentVersion | undefined> {
+    const snapshot = await this.load();
+    return snapshot.agents.find((agent) => agent.id === id);
   }
 
   async getExperiment(experimentId: string): Promise<ExperimentRun | undefined> {

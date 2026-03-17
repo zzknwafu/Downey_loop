@@ -10,6 +10,7 @@ import { buildLayerInsights, buildRootCauseSummary } from "./root-cause.js";
 // Keep these tokens in this module for auto-debug contract checks:
 // proxy_cvr
 // rerank_hit_at_3
+// rerank_hit_at_k
 
 const averageByMetric = (metrics: MetricResult[]): Map<string, number> => {
   const accumulator = new Map<string, { sum: number; count: number; layer: LayerName }>();
@@ -107,31 +108,37 @@ export const compareExperiments = (
   const rerankEvidence = findEvidenceCases(baselineExperiment, candidateExperiment, "rerank");
   const answerEvidence = findEvidenceCases(baselineExperiment, candidateExperiment, "answer");
   const evidenceCaseIds = [...new Set([...retrievalEvidence, ...rerankEvidence, ...answerEvidence])];
-  const layerInsights = buildLayerInsights(layerDeltas, {
+  const evidenceByLayer = {
     retrieval: retrievalEvidence,
     rerank: rerankEvidence,
     answer: answerEvidence,
-  });
+  };
 
-  const { summary, attributions } = buildRootCauseSummary(
+  const layerInsights = buildLayerInsights(layerDeltas, evidenceByLayer);
+  const rootCause = buildRootCauseSummary(
     overallDeltas,
     layerDeltas,
+    evidenceByLayer,
     evidenceCaseIds,
   );
   const regressedLayers = layerInsights.filter((item) => item.status === "regressed");
-
-  if (regressedLayers.length > 0) {
-    summary.push(`风险层级：${regressedLayers.map((item) => item.layer).join(", ")}`);
-  }
+  const rootCauseSummary =
+    regressedLayers.length > 0
+      ? [...rootCause.summary, `风险层级：${regressedLayers.map((item) => item.layer).join(", ")}`]
+      : rootCause.summary;
 
   return {
+    headline: rootCause.headline,
     baselineExperimentId: baselineExperiment.experimentId,
     candidateExperimentId: candidateExperiment.experimentId,
     overallDeltas,
     layerDeltas,
     layerInsights,
-    rootCauseSummary: summary,
+    driverPositive: rootCause.driverPositive,
+    driverNegative: rootCause.driverNegative,
+    confidence: rootCause.confidence,
+    rootCauseSummary,
     evidenceCaseIds,
-    attributionRecords: attributions,
+    attributionRecords: rootCause.attributions,
   };
 };

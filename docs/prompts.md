@@ -46,6 +46,7 @@ Date: 2026-03-16
 - 不设计多租户 SaaS
 - 不设计平台内部多 agent 协同底座
 - 不设计模型管理平台
+- 不绕过 [sync-rules.md](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/sync-rules.md) 修改不属于自己的 owner 文件
 
 ## 2. Backend Agent
 
@@ -89,6 +90,7 @@ Date: 2026-03-16
 - 不引入过重基础设施
 - 默认本地优先
 - 存储默认采用 SQLite 或等价本地方案
+- 共享核心文件 `src/domain/types.ts`、`src/domain/evaluators.ts`、`src/domain/comparison.ts` 只能由 Agent 1 修改
 
 ## 3. Runner Agent
 
@@ -130,6 +132,7 @@ Runner 需要承接以下流程：
 - 不将平台设计成多 agent 编排系统
 - 不引入分布式复杂调度
 - 保持错误可追踪
+- 若需要修改共享核心文件，必须回到 Agent 1 收口
 
 ## 4. Evaluator Agent
 
@@ -181,6 +184,7 @@ AI 搜索层级包括：
 
 - 不允许把 binary 模糊成连续值
 - 不把 evaluator 实现成只返回自然语言说明
+- `src/domain/evaluators.ts` 与 `src/domain/comparison.ts` 只能由 Agent 1 修改
 
 ## 5. Frontend Agent
 
@@ -225,3 +229,4 @@ AI 搜索层级包括：
 - 布局保持稳定，避免 hover 导致抖动
 - 不做与产品主线无关的复杂 UI
 - 优先保证信息架构清晰
+- 只消费共享 contract，不修改 `src/domain/types.ts`、`src/domain/evaluators.ts`、`src/domain/comparison.ts`

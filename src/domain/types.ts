@@ -8,6 +8,7 @@ export type CodeEvaluatorStrategy =
   | "fuzzy_match"
   | "python_script";
 export type DatasetType = "ideal_output" | "workflow" | "trace_monitor";
+export type TargetType = "prompt" | "agent";
 export type DomainType = "food_delivery" | "grocery";
 export type TaskType = "ai_search" | "recommendation" | "fulfillment_qa" | "aftersales";
 export type ExperimentStatus = "CREATED" | "RUNNING" | "FINISHED" | "FAILED";
@@ -80,14 +81,34 @@ export interface LayerTrace {
   model?: string;
 }
 
-export interface SearchPipelineVersion {
+export interface PromptVersion {
   id: string;
   name: string;
   version: string;
+  description?: string;
+  systemPrompt: string;
+  userTemplate: string;
+  inputSchema?: Record<string, unknown>;
+}
+
+export interface AgentVersion {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
   queryProcessor: string;
   retriever: string;
   reranker: string;
   answerer: string;
+}
+
+export type SearchPipelineVersion = AgentVersion;
+export type EvalTarget = PromptVersion | AgentVersion;
+
+export interface TargetRef {
+  id: string;
+  type: TargetType;
+  version: string;
 }
 
 export interface MetricDefinition {
@@ -164,6 +185,7 @@ export interface ExperimentRun {
   experimentId: string;
   datasetId?: string;
   evaluatorIds?: string[];
+  targetRef?: TargetRef;
   pipelineVersionId?: string;
   target: SearchPipelineVersion;
   status: ExperimentStatus;
@@ -220,11 +242,15 @@ export interface LayerInsight {
 }
 
 export interface ExperimentComparison {
+  headline: string;
   baselineExperimentId: string;
   candidateExperimentId: string;
   overallDeltas: MetricDelta[];
   layerDeltas: MetricDelta[];
   layerInsights: LayerInsight[];
+  driverPositive: string[];
+  driverNegative: string[];
+  confidence: number;
   rootCauseSummary: string[];
   evidenceCaseIds: string[];
   attributionRecords: AttributionRecord[];
@@ -251,6 +277,8 @@ export interface StartExperimentInput {
 export interface LocalStoreSnapshot {
   datasets: Dataset[];
   evaluators: Evaluator[];
+  prompts: PromptVersion[];
+  agents: AgentVersion[];
   experiments: ExperimentRun[];
   comparisons: ExperimentComparison[];
   traces: TraceRun[];
@@ -259,6 +287,8 @@ export interface LocalStoreSnapshot {
 export interface ApiContract {
   listDatasets(): Promise<Dataset[]>;
   listEvaluators(): Promise<Evaluator[]>;
+  listPrompts?(): Promise<PromptVersion[]>;
+  listAgents?(): Promise<AgentVersion[]>;
   listExperiments(): Promise<ExperimentRun[]>;
   getComparison(): Promise<ExperimentComparison>;
   getTrace(traceId: string): Promise<TraceRun | undefined>;

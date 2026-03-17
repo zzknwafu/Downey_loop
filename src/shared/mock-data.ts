@@ -1,6 +1,6 @@
 import { compareExperiments } from "../domain/comparison.js";
-import { metricDefinitions } from "../domain/evaluators.js";
-import { buildSampleExperiments, sampleCases } from "../domain/sample-data.js";
+import { buildSampleExperiments } from "../domain/sample-data.js";
+import { sampleDatasets, sampleEvaluators } from "../domain/sample-data.js";
 import type {
   AbExperimentRecord,
   ApiMeta,
@@ -10,6 +10,7 @@ import type {
   DatasetRecord,
   EvaluatorRecord,
   ExperimentRunRecord,
+  LayerInsightRecord,
   MetricDeltaRecord,
   MetricScoreRecord,
   RetrievalCandidateRecord,
@@ -137,56 +138,10 @@ const buildTrajectory = (trace: {
 
 const buildDatasets = (): DatasetRecord[] => {
   const { baseline } = buildSampleExperiments();
-
-  const idealOutput = {
-    id: "dataset_ideal_001",
-    name: "外卖 AI 搜理想输出集",
-    description: "外卖和商超 AI 搜索的最小理想输出评测集。",
-    dataset_type: "ideal_output",
-    schema: [
-      {
-        name: "input",
-        data_type: "String",
-        required: true,
-        description: "评测输入。",
-      },
-      {
-        name: "reference_output",
-        data_type: "String",
-        required: true,
-        description: "参考输出。",
-      },
-      {
-        name: "context",
-        data_type: "JSON",
-        required: false,
-        description: "补充上下文、约束和候选。",
-      },
-    ],
-    cases: sampleCases.map((sample) => ({
-      id: sample.caseId,
-      input: sample.userQuery,
-      reference_output: sample.answerReference,
-      context: {
-        domain: sample.domain,
-        task_type: sample.taskType,
-        query_constraints: sample.queryConstraints ?? null,
-        retrieval_candidates: sample.retrievalCandidates.map(mapCandidate),
-        expected_retrieval_ids: sample.expectedRetrievalIds,
-        acceptable_retrieval_ids: sample.acceptableRetrievalIds,
-        expected_top_items: sample.expectedTopItems,
-        business_labels: sample.businessOutcomeLabels ?? null,
-      },
-    })),
-    version: "0.1.0",
-    created_at: SEEDED_AT,
-    updated_at: SEEDED_AT,
-  } satisfies DatasetRecord;
-
   const workflow = {
     id: "dataset_workflow_001",
     name: "AI 搜 Workflow 执行集",
-    description: "同一批样本按 workflow 视角表达，用于节点与步骤联调。",
+    description: "同一批样本按 workflow 视角表达，用于节点执行、工具调用与回放联调。",
     dataset_type: "workflow",
     schema: [
       {
@@ -208,7 +163,7 @@ const buildDatasets = (): DatasetRecord[] => {
         description: "期望步骤。",
       },
     ],
-    cases: sampleCases.map((sample) => ({
+    cases: sampleDatasets[0]!.cases.map((sample) => ({
       id: `workflow_${sample.caseId}`,
       input: sample.userQuery,
       workflow_output: {
@@ -266,19 +221,53 @@ const buildDatasets = (): DatasetRecord[] => {
     updated_at: SEEDED_AT,
   } satisfies DatasetRecord;
 
-  return [idealOutput, workflow, traceMonitor];
+  const idealOutputDatasets = sampleDatasets.map(
+    (dataset) =>
+      ({
+        id: dataset.id,
+        name: dataset.name,
+        description: dataset.description,
+        dataset_type: dataset.datasetType,
+        schema: dataset.schema.map((field) => ({
+          name: field.name,
+          data_type: field.dataType,
+          required: field.required,
+          description: field.description,
+        })),
+        cases: dataset.cases.map((sample) => ({
+          id: sample.caseId,
+          input: sample.userQuery,
+          reference_output: sample.answerReference,
+          context: {
+            domain: sample.domain,
+            task_type: sample.taskType,
+            query_constraints: sample.queryConstraints ?? null,
+            retrieval_candidates: sample.retrievalCandidates.map(mapCandidate),
+            expected_retrieval_ids: sample.expectedRetrievalIds,
+            acceptable_retrieval_ids: sample.acceptableRetrievalIds,
+            expected_top_items: sample.expectedTopItems,
+            business_labels: sample.businessOutcomeLabels ?? null,
+          },
+        })),
+        version: dataset.version,
+        created_at: dataset.createdAt,
+        updated_at: dataset.updatedAt,
+      }) satisfies DatasetRecord,
+  );
+
+  return [...idealOutputDatasets, workflow, traceMonitor];
 };
 
 const buildEvaluators = (): EvaluatorRecord[] =>
-  metricDefinitions.map((metric) => ({
-    id: `evaluator_${metric.name}`,
-    name: metric.name,
-    family: metric.evaluatorFamily,
-    layer: toContractLayer(metric.layer),
-    metric_type: metric.metricType,
-    code_strategy: metric.codeStrategy,
-    description: metric.description,
-    config: metric.codeStrategy ? { strategy: metric.codeStrategy } : {},
+  sampleEvaluators.map((evaluator) => ({
+    id: evaluator.id,
+    name: evaluator.name,
+    family: evaluator.family,
+    layer: toContractLayer(evaluator.layer),
+    metric_type: evaluator.metricType,
+    code_strategy: evaluator.codeStrategy,
+    description: evaluator.description,
+    config: evaluator.config,
     created_at: SEEDED_AT,
     updated_at: SEEDED_AT,
   }));
@@ -302,10 +291,10 @@ const buildExperiments = (): { experiments: ExperimentRunRecord[]; traces: Trace
     }));
 
     return {
-      id: runIdForExperiment(experiment.experimentId),
-      dataset_id: "dataset_ideal_001",
+      id: experiment.experimentId,
+      dataset_id: experiment.datasetId ?? sampleDatasets[0]!.id,
       pipeline_version: mapPipeline(experiment.target),
-      evaluator_ids: buildEvaluators().map((evaluator) => evaluator.id),
+      evaluator_ids: sampleEvaluators.map((evaluator) => evaluator.id),
       status: "FINISHED",
       summary: {
         case_count: caseResults.length,
@@ -348,18 +337,6 @@ const buildExperiments = (): { experiments: ExperimentRunRecord[]; traces: Trace
   return { experiments, traces };
 };
 
-const runIdForExperiment = (experimentId: string) => {
-  if (experimentId === "exp_baseline") {
-    return "experiment_run_baseline";
-  }
-
-  if (experimentId === "exp_candidate") {
-    return "experiment_run_candidate";
-  }
-
-  return experimentId;
-};
-
 const mapDelta = (delta: {
   metricName: string;
   layer: string;
@@ -390,15 +367,36 @@ const mapAttribution = (record: {
   evidence_case_ids: record.evidenceCaseIds,
 });
 
+const mapLayerInsight = (insight: {
+  layer: string;
+  status: "healthy" | "warning" | "regressed";
+  averageDelta: number;
+  strongestNegativeMetric?: string;
+  strongestPositiveMetric?: string;
+  evidenceCaseIds: string[];
+}): LayerInsightRecord => ({
+  layer: toContractLayer(insight.layer),
+  status: insight.status,
+  average_delta: insight.averageDelta,
+  strongest_negative_metric: insight.strongestNegativeMetric,
+  strongest_positive_metric: insight.strongestPositiveMetric,
+  evidence_case_ids: insight.evidenceCaseIds,
+});
+
 const buildAbExperiment = (): AbExperimentRecord => {
   const { baseline, candidate } = buildSampleExperiments();
   const comparison = compareExperiments(baseline, candidate);
 
   return {
-    baseline_run_id: runIdForExperiment(comparison.baselineExperimentId),
-    candidate_run_id: runIdForExperiment(comparison.candidateExperimentId),
+    headline: comparison.headline,
+    baseline_run_id: comparison.baselineExperimentId,
+    candidate_run_id: comparison.candidateExperimentId,
     overall_metrics: comparison.overallDeltas.map(mapDelta),
     layer_deltas: comparison.layerDeltas.map(mapDelta),
+    layer_insights: comparison.layerInsights.map(mapLayerInsight),
+    driver_positive: comparison.driverPositive,
+    driver_negative: comparison.driverNegative,
+    confidence: comparison.confidence,
     root_cause_summary: comparison.rootCauseSummary,
     evidence_case_ids: comparison.evidenceCaseIds,
     attribution_records: comparison.attributionRecords.map(mapAttribution),

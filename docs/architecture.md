@@ -10,7 +10,7 @@ Date: 2026-03-16
 
 核心执行流为：
 
-`Dataset -> Experiment -> Runner -> Evaluator -> Trace / Result`
+`Target -> Dataset -> Experiment -> Runner -> Evaluator -> Trace / Result`
 
 与通用问答评测不同，本系统将 AI 搜索 pipeline 拆分为分层可观测结构，而不是只存最终输出。
 
@@ -69,7 +69,29 @@ Date: 2026-03-16
 - `reranker`
 - `answerer`
 
-### 3.4 ExperimentRun
+### 3.4 PromptVersion
+
+代表被测 prompt 版本。
+
+最小字段集：
+
+- `id`
+- `name`
+- `version`
+- `system_prompt`
+- `user_template`
+
+### 3.5 TargetRef
+
+代表实验绑定的被测对象引用。
+
+最小字段集：
+
+- `id`
+- `type`
+- `version`
+
+### 3.6 ExperimentRun
 
 代表一次实验执行。
 
@@ -77,7 +99,7 @@ Date: 2026-03-16
 
 - `id`
 - `dataset_id`
-- `pipeline_version`
+- `target_ref`
 - `status`
 - `summary`
 
@@ -88,7 +110,7 @@ Date: 2026-03-16
 - `FINISHED`
 - `FAILED`
 
-### 3.5 CaseResult
+### 3.7 CaseResult
 
 代表单个 case 的实验结果。
 
@@ -99,7 +121,7 @@ Date: 2026-03-16
 - `scores`
 - `trace_id`
 
-### 3.6 TraceRun
+### 3.8 TraceRun
 
 代表一次执行轨迹。
 
@@ -111,7 +133,7 @@ Date: 2026-03-16
 - `latency`
 - `tool_calls`
 
-### 3.7 ABExperiment
+### 3.9 ABExperiment
 
 代表两个实验结果之间的对比对象。
 
@@ -128,11 +150,11 @@ Date: 2026-03-16
 
 实体关系如下：
 
-`Dataset -> ExperimentRun -> CaseResult -> TraceRun`
+`Target -> ExperimentRun -> CaseResult -> TraceRun`
 
 补充关系：
 
-- `ExperimentRun` 关联 `SearchPipelineVersion`
+- `ExperimentRun` 关联 `PromptVersion` 或 `SearchPipelineVersion`
 - `ExperimentRun` 关联多个 `Evaluator`
 - `ABExperiment` 对比两个 `ExperimentRun`
 
@@ -237,7 +259,21 @@ downey_loop/
 
 当前实现仍可先维持在单仓库单体结构中，以上结构作为后续演进方向。
 
-## 11. Technology Stack
+## 11. Target Strategy
+
+当前架构不要求完整 Prompt IDE，但必须存在轻量的 targets 层。
+
+目标对象包括：
+
+- `PromptVersion`
+- `AgentVersion`
+
+实验运行时通过 `TargetRef` 绑定被测对象，再由 runner 选择对应执行路径：
+
+- prompt target：按 prompt 模板执行
+- agent target：按 AI 搜索 pipeline 执行
+
+## 12. Technology Stack
 
 Frontend:
 

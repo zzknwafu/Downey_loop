@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { compareExperiments } from "../src/domain/comparison.js";
 import { evaluateSearchCase } from "../src/domain/evaluators.js";
+import { buildRootCauseSummary } from "../src/domain/root-cause.js";
 import { buildSampleExperiments, sampleCases } from "../src/domain/sample-data.js";
-import { ExperimentCaseRun, RetrievalCandidate } from "../src/domain/types.js";
+import { ExperimentCaseRun, MetricDelta, RetrievalCandidate } from "../src/domain/types.js";
 
 const buildRun = (
   evalCaseIndex: number,
@@ -77,6 +78,38 @@ describe("search evaluator", () => {
     const coverage = run.layerMetrics.find((metric) => metric.metricName === "retrieval_coverage");
     expect(Number(coverage?.score)).toBeLessThan(1);
   });
+
+  it("requires clarification when evidence is weak", () => {
+    const evalCase = sampleCases[0]!;
+    const run = buildRun(
+      0,
+      [evalCase.retrievalCandidates[1]!, evalCase.retrievalCandidates[2]!],
+      [evalCase.retrievalCandidates[1]!, evalCase.retrievalCandidates[2]!],
+      "推荐麻辣烫。",
+    );
+
+    const clarificationDecision = run.layerMetrics.find(
+      (metric) => metric.metricName === "clarification_decision",
+    );
+    expect(clarificationDecision?.metricType).toBe("binary");
+    expect(clarificationDecision?.score).toBe(0);
+  });
+
+  it("includes PRD-required answer and overall metrics", () => {
+    const evalCase = sampleCases[0]!;
+    const run = buildRun(
+      0,
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      "建议选川香小炒双人餐，预算内，适合两个人。",
+    );
+
+    expect(run.layerMetrics.some((metric) => metric.metricName === "clarification_decision")).toBe(true);
+    expect(run.layerMetrics.some((metric) => metric.metricName === "proxy_dwell_time")).toBe(true);
+    expect(run.layerMetrics.some((metric) => metric.metricName === "proxy_trust")).toBe(true);
+    expect(run.layerMetrics.some((metric) => metric.metricName === "latency")).toBe(true);
+    expect(run.layerMetrics.some((metric) => metric.metricName === "rerank_hit_at_k")).toBe(true);
+  });
 });
 
 describe("experiment comparison", () => {
@@ -93,6 +126,9 @@ describe("experiment comparison", () => {
       ),
     ).toBe(true);
     expect(comparison.evidenceCaseIds.length).toBeGreaterThan(0);
+    expect(Array.isArray(comparison.driverPositive)).toBe(true);
+    expect(Array.isArray(comparison.driverNegative)).toBe(true);
+    expect(typeof comparison.confidence).toBe("number");
   });
 
   it("supports drilling from overall metrics to layer deltas", () => {
@@ -114,5 +150,89 @@ describe("experiment comparison", () => {
     expect(comparison.layerInsights.some((insight) => insight.layer === "rerank")).toBe(true);
     expect(comparison.layerInsights.some((insight) => insight.layer === "answer")).toBe(true);
     expect(comparison.layerInsights.some((insight) => insight.layer === "overall")).toBe(true);
+  });
+
+  it("attributes regression to stock guardrail before generic retrieval drop", () => {
+    const overallDeltas: MetricDelta[] = [
+      {
+        metricName: "proxy_trust",
+        layer: "overall",
+        baselineValue: 0.8,
+        candidateValue: 0.5,
+        delta: -0.3,
+      },
+    ];
+    const layerDeltas: MetricDelta[] = [
+      {
+        metricName: "stock_guardrail",
+        layer: "retrieval",
+        baselineValue: 1,
+        candidateValue: 0,
+        delta: -1,
+      },
+      {
+        metricName: "retrieval_coverage",
+        layer: "retrieval",
+        baselineValue: 1,
+        candidateValue: 0.92,
+        delta: -0.08,
+      },
+    ];
+
+    const result = buildRootCauseSummary(
+      overallDeltas,
+      layerDeltas,
+      {
+        retrieval: ["grocery_004"],
+        rerank: [],
+        answer: [],
+      },
+      ["grocery_004"],
+    );
+
+    expect(result.headline).toContain("stock guardrail");
+    expect(result.driverNegative).toContain("stock_guardrail");
+  });
+
+  it("attributes regression to budget guardrail before generic rerank hit drop", () => {
+    const overallDeltas: MetricDelta[] = [
+      {
+        metricName: "proxy_cvr",
+        layer: "overall",
+        baselineValue: 0.72,
+        candidateValue: 0.51,
+        delta: -0.21,
+      },
+    ];
+    const layerDeltas: MetricDelta[] = [
+      {
+        metricName: "budget_guardrail",
+        layer: "rerank",
+        baselineValue: 1,
+        candidateValue: 0,
+        delta: -1,
+      },
+      {
+        metricName: "rerank_hit_at_k",
+        layer: "rerank",
+        baselineValue: 1,
+        candidateValue: 0.94,
+        delta: -0.06,
+      },
+    ];
+
+    const result = buildRootCauseSummary(
+      overallDeltas,
+      layerDeltas,
+      {
+        retrieval: [],
+        rerank: ["food_001"],
+        answer: [],
+      },
+      ["food_001"],
+    );
+
+    expect(result.headline).toContain("budget guardrail");
+    expect(result.driverNegative).toContain("budget_guardrail");
   });
 });

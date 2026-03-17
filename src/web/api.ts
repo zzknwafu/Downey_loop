@@ -9,6 +9,7 @@ import type {
   EvaluatorRecord,
   ExperimentRunRecord,
   ItemResponse,
+  TraceRunRecord,
 } from "../shared/contracts.js";
 
 const expectOk = async <T>(response: Response): Promise<T> => {
@@ -70,4 +71,14 @@ export const createComparison = async (payload: CreateComparisonInput) => {
   });
 
   return expectOk<ItemResponse<AbExperimentRecord>>(response);
+};
+
+export const fetchExperiment = async (experimentId: string) => {
+  const response = await fetch(`/api/experiments/${experimentId}`);
+  return expectOk<ItemResponse<ExperimentRunRecord>>(response);
+};
+
+export const fetchTrace = async (traceId: string) => {
+  const response = await fetch(`/api/traces/${traceId}`);
+  return expectOk<ItemResponse<TraceRunRecord>>(response);
 };

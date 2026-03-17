@@ -1,9 +1,11 @@
 import {
+  AgentVersion,
   ApiContract,
   Dataset,
   Evaluator,
   ExperimentComparison,
   ExperimentRun,
+  PromptVersion,
   TraceRun,
 } from "../domain/types.js";
 
@@ -45,6 +47,8 @@ export interface BootstrapPayload {
 
 export interface EvalLoopApi extends ApiContract {
   bootstrap(): Promise<BootstrapPayload>;
+  listPrompts(): Promise<PromptVersion[]>;
+  listAgents(): Promise<AgentVersion[]>;
   getExperiment(experimentId: string): Promise<ExperimentRun | undefined>;
 }
 
