@@ -10,8 +10,8 @@ describe("bootstrap contract", () => {
     expect(snapshot.evaluators.length).toBeGreaterThan(0);
     expect(snapshot.experiments).toHaveLength(2);
     expect(snapshot.traces).toHaveLength(sampleCases.length * 2);
-    expect(snapshot.ab_experiment.baseline_run_id).toBe("experiment_run_baseline");
-    expect(snapshot.ab_experiment.candidate_run_id).toBe("experiment_run_candidate");
+    expect(snapshot.ab_experiment.baseline_run_id).toBe("exp_baseline");
+    expect(snapshot.ab_experiment.candidate_run_id).toBe("exp_candidate");
   });
 
   it("keeps dataset cases aligned with declared schema families", () => {
