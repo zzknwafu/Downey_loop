@@ -77,6 +77,184 @@ describe("runner and infra", () => {
     expect(agents.length).toBeGreaterThan(0);
   });
 
+  it("supports targets contract and prompt preview/debug through the mock api", async () => {
+    const api = createMockEvalLoopApi();
+
+    const createdPrompt = await api.createPrompt({
+      name: "Debug Prompt",
+      description: "preview prompt",
+      system_prompt: "You are a helper for {{input}}.",
+      user_template: "Question: {{input}}",
+    });
+    const createdAgent = await api.createAgent({
+      name: "Debug Agent",
+      description: "preview agent",
+      query_processor: "qp-debug",
+      retriever: "ret-debug",
+      reranker: "rr-debug",
+      answerer: "ans-debug",
+    });
+
+    const prompts = await api.listPrompts();
+    const agents = await api.listAgents();
+    const fetchedPrompt = await api.getPrompt(createdPrompt.id);
+    const fetchedAgent = await api.getAgent(createdAgent.id);
+    const preview = await api.previewPrompt(createdPrompt.id, {
+      input: "spicy noodles",
+    });
+
+    expect(prompts[0]?.id).toBe(createdPrompt.id);
+    expect(agents[0]?.id).toBe(createdAgent.id);
+    expect(fetchedPrompt?.system_prompt).toContain("{{input}}");
+    expect(fetchedAgent?.query_processor).toBe("qp-debug");
+    expect(preview?.rendered_user_prompt).toContain("spicy noodles");
+    expect(preview?.output_preview).toContain("spicy noodles");
+  });
+
+  it("supports dataset list, get and create through the mock api contract", async () => {
+    const api = createMockEvalLoopApi();
+    const existing = await api.listDatasets();
+
+    const created = await api.createDataset({
+      name: "Mock Dataset",
+      description: "for frontend integration",
+      datasetType: "ideal_output",
+      sampleCount: 12,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "input",
+        },
+        {
+          name: "reference_output",
+          dataType: "String",
+          required: true,
+          description: "reference output",
+        },
+        {
+          name: "context",
+          dataType: "JSON",
+          required: true,
+          description: "context",
+        },
+      ],
+    });
+
+    const listed = await api.listDatasets();
+    const fetched = await api.getDataset(created.id);
+
+    expect(existing.length).toBeGreaterThan(0);
+    expect(listed[0]?.id).toBe(created.id);
+    expect(fetched?.name).toBe("Mock Dataset");
+    expect(fetched?.cases).toHaveLength(0);
+  });
+
+  it("supports dataset update through the mock api contract", async () => {
+    const api = createMockEvalLoopApi();
+    const dataset = sampleDatasets[0]!;
+
+    const updated = await api.updateDataset(dataset.id, {
+      name: "Updated Dataset",
+      description: "updated from contract layer",
+      datasetType: dataset.datasetType,
+      sampleCount: 12,
+      schema: dataset.schema,
+    });
+
+    const fetched = await api.getDataset(dataset.id);
+
+    expect(updated?.name).toBe("Updated Dataset");
+    expect(updated?.description).toBe("updated from contract layer");
+    expect(fetched?.updatedAt).toBe("2026-03-17T00:00:00.000Z");
+  });
+
+  it("supports dataset case list, detail, replace, create, update, delete and synthesis through the mock api contract", async () => {
+    const api = createMockEvalLoopApi();
+    const dataset = await api.createDataset({
+      name: "Editable Dataset",
+      description: "mock api editable dataset",
+      datasetType: "ideal_output",
+      sampleCount: 12,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "input",
+        },
+        {
+          name: "reference_output",
+          dataType: "String",
+          required: false,
+          description: "reference output",
+        },
+        {
+          name: "context",
+          dataType: "JSON",
+          required: false,
+          description: "context",
+        },
+      ],
+    });
+
+    const listedCases = await api.listDatasetCases(dataset.id);
+    expect(listedCases).toHaveLength(0);
+    const replacedCases = await api.replaceDatasetCases(dataset.id, {
+      cases: [
+        {
+          id: "case_replaced",
+          input: "replaced input",
+          reference_output: "replaced output",
+          context: { source: "replace" },
+        },
+      ],
+    });
+    const originalCase = replacedCases?.[0];
+    const fetchedCase = await api.getDatasetCase(dataset.id, originalCase!.id);
+    const createdCase = await api.createDatasetCase(dataset.id, {
+      id: "case_created",
+      input: "created input",
+      reference_output: "created output",
+      context: { source: "create" },
+    });
+    const updatedCase = await api.updateDatasetCase(dataset.id, {
+      id: "case_created",
+      input: "case_created updated",
+      reference_output: "created output",
+      context: { source: "update" },
+    });
+    const deleted = await api.deleteDatasetCase(dataset.id, "case_created");
+    const synthesis = await api.synthesizeDatasetCases(dataset.id, {
+      dataset_id: dataset.id,
+      source: "online",
+      direction: "align_online_distribution",
+      scenario_description: "商超搜索补齐线上分布",
+      use_case_description: "回灌真实高频失败 query",
+      seed_source_ref: "online:7d",
+      columns: [
+        {
+          name: "input",
+          description: "query text",
+          generation_requirement: "更贴近线上失败样本分布",
+        },
+      ],
+      sample_count: 10,
+    });
+
+    expect(listedCases?.length).toBe(0);
+    expect(fetchedCase?.id).toBe(originalCase.id);
+    expect(replacedCases?.[0]?.id).toBe("case_replaced");
+    expect(createdCase?.id).toBe("case_created");
+    expect(updatedCase && "input" in updatedCase ? updatedCase.input : "").toContain("updated");
+    expect(deleted).toBe(true);
+    expect(synthesis?.source).toBe("online");
+    expect(synthesis?.direction).toBe("align_online_distribution");
+    expect(synthesis?.status).toBe("draft");
+    expect(synthesis?.items).toHaveLength(10);
+  });
+
   it("keeps shared mock snapshot ids aligned with experiment and comparison records", () => {
     const snapshot = createSeedSnapshot();
     const experimentIds = new Set(snapshot.experiments.map((experiment) => experiment.id));

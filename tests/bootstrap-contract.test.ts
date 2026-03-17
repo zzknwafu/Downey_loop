@@ -36,4 +36,33 @@ describe("bootstrap contract", () => {
       final_output: expect.any(String),
     });
   });
+
+  it("includes scenario-driven evaluator datasets for retrieval, rerank, answer and overall", () => {
+    const datasetIds = sampleDatasets.map((dataset) => dataset.id);
+
+    expect(datasetIds).toContain("dataset_retrieval_intent_001");
+    expect(datasetIds).toContain("dataset_rerank_guardrail_001");
+    expect(datasetIds).toContain("dataset_answer_trust_001");
+    expect(datasetIds).toContain("dataset_business_goal_001");
+
+    const retrievalDataset = sampleDatasets.find(
+      (dataset) => dataset.id === "dataset_retrieval_intent_001",
+    );
+    const guardrailDataset = sampleDatasets.find(
+      (dataset) => dataset.id === "dataset_rerank_guardrail_001",
+    );
+
+    expect(retrievalDataset?.cases.map((item) => item.caseId)).toEqual([
+      "food_001",
+      "food_004",
+      "grocery_001",
+      "grocery_003",
+    ]);
+    expect(guardrailDataset?.cases.map((item) => item.caseId)).toEqual([
+      "food_002",
+      "food_003",
+      "grocery_002",
+      "grocery_004",
+    ]);
+  });
 });

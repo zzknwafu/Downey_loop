@@ -101,3 +101,30 @@
 
 - `coze-loop` 开源仓库没有公开业务数据集行和真实 prompt 行，因此这里映射的是“模板能力”，不是生产数据快照。
 - 当前项目里每个 evaluator 的 `config` 已写入 `cozeLoopSourceTemplates` 和 `businessRubric`，可直接用于 UI 展示或后续导出。
+
+## 已落地的专项评测集
+
+- [`dataset_retrieval_intent_001`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/domain/sample-data.ts)
+  对应 `retrieval_coverage / retrieval_intent_match / hard_constraint_recall / noise_rate`
+- [`dataset_rerank_guardrail_001`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/domain/sample-data.ts)
+  对应 `rerank_hit_at_k / constraint_preservation / budget_guardrail / delivery_eta_guardrail / stock_guardrail`
+- [`dataset_answer_trust_001`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/domain/sample-data.ts)
+  对应 `answer_correctness / answer_groundedness / answer_trustworthiness / answer_top_item_consistency / clarification_decision`
+- [`dataset_business_goal_001`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/domain/sample-data.ts)
+  对应 `proxy_ctr / proxy_cvr / proxy_dwell_time / proxy_trust / business_goal_alignment / business_guardrail_pass`
+
+## 已迁移的 Prompt 资产
+
+以下 Prompt 已经以 `PromptVersion` 形式接入 [`src/domain/sample-data.ts`](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/src/domain/sample-data.ts)，会出现在默认 seeded prompts 里：
+
+- `prompt_eval_correctness_coze_v1`
+- `prompt_eval_hallucination_coze_v1`
+- `prompt_eval_conciseness_coze_v1`
+- `prompt_eval_helpfulness_coze_v1`
+- `prompt_eval_detail_coze_v1`
+- `prompt_eval_reference_alignment_coze_v1`
+- `prompt_eval_instruction_following_coze_v1`
+- `prompt_eval_agent_task_completion_coze_v1`
+- `prompt_eval_agent_trajectory_coze_v1`
+
+这批 prompt 不是 `coze-loop` 生产环境的真实业务 prompt 行，而是把开源 evaluator template 的核心 rubric 迁成了当前项目能直接展示和联调的 prompt 资产。

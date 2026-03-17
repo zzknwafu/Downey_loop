@@ -1,6 +1,9 @@
 import type {
+  AgentRecord,
   AttributionRecord,
   CaseResultRecord,
+  PromptRecord,
+  DatasetCaseRecord,
   DatasetRecord,
   EvaluatorRecord,
   ExperimentRunRecord,
@@ -11,6 +14,7 @@ import type {
   TraceRunRecord,
 } from "../shared/contracts.js";
 import type {
+  EditableDatasetCase,
   Dataset,
   Evaluator,
   ExperimentComparison,
@@ -21,6 +25,68 @@ import type {
 
 const normalizeLayer = (layer: string) =>
   (layer === "query" ? "retrieval" : layer) as "retrieval" | "rerank" | "answer" | "overall";
+
+const isObject = (value: unknown): value is Record<string, unknown> =>
+  value !== null && typeof value === "object" && !Array.isArray(value);
+
+const readString = (value: object, key: string): string | undefined => {
+  const field = Reflect.get(value, key);
+  return typeof field === "string" ? field : undefined;
+};
+
+const readStringArray = (value: object, key: string): string[] | undefined => {
+  const field = Reflect.get(value, key);
+  return Array.isArray(field) && field.every((item) => typeof item === "string") ? field : undefined;
+};
+
+const readObject = (value: object, key: string): Record<string, unknown> | undefined => {
+  const field = Reflect.get(value, key);
+  return isObject(field) ? field : undefined;
+};
+
+const readArray = (value: object, key: string): unknown[] | undefined => {
+  const field = Reflect.get(value, key);
+  return Array.isArray(field) ? field : undefined;
+};
+
+const ensureField = (value: string | undefined, fieldName: string): string => {
+  if (!value) {
+    throw new Error(`Missing dataset case field: ${fieldName}`);
+  }
+
+  return value;
+};
+
+const toIdealOutputContext = (item: object): Record<string, unknown> => {
+  const explicitContext = readObject(item, "context");
+  if (explicitContext) {
+    return explicitContext;
+  }
+
+  return {
+    domain: readString(item, "domain") ?? null,
+    task_type: readString(item, "taskType") ?? null,
+    query_constraints: readObject(item, "queryConstraints") ?? null,
+    retrieval_candidates: readArray(item, "retrievalCandidates") ?? [],
+    expected_retrieval_ids: readStringArray(item, "expectedRetrievalIds") ?? [],
+    acceptable_retrieval_ids: readStringArray(item, "acceptableRetrievalIds") ?? [],
+    expected_top_items: readStringArray(item, "expectedTopItems") ?? [],
+    business_labels: readObject(item, "businessOutcomeLabels") ?? null,
+  };
+};
+
+const isIdealOutputDatasetCaseRecord = (
+  value: DatasetCaseRecord,
+): value is Extract<DatasetCaseRecord, { reference_output: string }> => "reference_output" in value;
+
+const isWorkflowDatasetCaseRecord = (
+  value: DatasetCaseRecord,
+): value is Extract<DatasetCaseRecord, { workflow_output: Record<string, unknown> }> =>
+  "workflow_output" in value;
+
+const isTraceMonitorDatasetCaseRecord = (
+  value: DatasetCaseRecord,
+): value is Extract<DatasetCaseRecord, { trace_id: string }> => "trace_id" in value;
 
 const mapMetric = (metric: MetricResult): MetricScoreRecord => ({
   metric_name: metric.metricName,
@@ -43,25 +109,98 @@ export const toDatasetRecord = (dataset: Dataset): DatasetRecord => ({
     required: column.required,
     description: column.description,
   })),
-  cases: dataset.cases.map((item) => ({
-    id: item.caseId,
-    input: item.userQuery,
-    reference_output: item.answerReference,
-    context: {
-      domain: item.domain,
-      task_type: item.taskType,
-      query_constraints: item.queryConstraints ?? null,
-      retrieval_candidates: item.retrievalCandidates,
-      expected_retrieval_ids: item.expectedRetrievalIds,
-      acceptable_retrieval_ids: item.acceptableRetrievalIds,
-      expected_top_items: item.expectedTopItems,
-      business_labels: item.businessOutcomeLabels ?? null,
-    },
-  })),
+  cases: dataset.cases.map((item) => toDatasetCaseRecord(item, dataset.datasetType)),
   version: dataset.version,
   created_at: dataset.createdAt,
   updated_at: dataset.updatedAt,
 });
+
+export const toDatasetCaseRecord = (
+  item: Dataset["cases"][number] | EditableDatasetCase,
+  datasetType: Dataset["datasetType"],
+): DatasetCaseRecord => {
+  const source = item as object;
+  const id = ensureField(readString(source, "caseId") ?? readString(source, "id"), "id");
+
+  switch (datasetType) {
+    case "ideal_output":
+      return {
+        id,
+        input: ensureField(readString(source, "userQuery") ?? readString(source, "input"), "input"),
+        reference_output: ensureField(
+          readString(source, "answerReference") ?? readString(source, "referenceOutput"),
+          "reference_output",
+        ),
+        context: toIdealOutputContext(source),
+      };
+    case "workflow":
+      return {
+        id,
+        input: ensureField(readString(source, "input"), "input"),
+        workflow_output: readObject(source, "workflowOutput") ?? readObject(source, "workflow_output") ?? {},
+        expected_steps:
+          readStringArray(source, "expectedSteps") ?? readStringArray(source, "expected_steps") ?? [],
+        context: readObject(source, "context"),
+      };
+    case "trace_monitor":
+      return {
+        id,
+        trace_id: ensureField(readString(source, "traceId") ?? readString(source, "trace_id"), "trace_id"),
+        final_output: ensureField(
+          readString(source, "finalOutput") ?? readString(source, "final_output"),
+          "final_output",
+        ),
+        trajectory: (readArray(source, "trajectory") ?? []) as Extract<
+          DatasetCaseRecord,
+          { trace_id: string }
+        >["trajectory"],
+        context: readObject(source, "context"),
+      };
+  }
+};
+
+export const toEditableDatasetCase = (
+  next: DatasetCaseRecord,
+  datasetType: Dataset["datasetType"],
+): EditableDatasetCase => {
+  switch (datasetType) {
+    case "ideal_output":
+      if (!isIdealOutputDatasetCaseRecord(next)) {
+        throw new Error("Invalid ideal output dataset case payload");
+      }
+
+      return {
+        caseId: next.id,
+        input: next.input,
+        referenceOutput: next.reference_output,
+        context: next.context,
+      };
+    case "workflow":
+      if (!isWorkflowDatasetCaseRecord(next)) {
+        throw new Error("Invalid workflow dataset case payload");
+      }
+
+      return {
+        caseId: next.id,
+        input: next.input,
+        workflowOutput: next.workflow_output,
+        expectedSteps: next.expected_steps,
+        context: next.context,
+      };
+    case "trace_monitor":
+      if (!isTraceMonitorDatasetCaseRecord(next)) {
+        throw new Error("Invalid trace monitor dataset case payload");
+      }
+
+      return {
+        caseId: next.id,
+        traceId: next.trace_id,
+        finalOutput: next.final_output,
+        trajectory: next.trajectory as unknown as Array<Record<string, unknown>>,
+        context: next.context,
+      };
+  }
+};
 
 export const toEvaluatorRecord = (evaluator: Evaluator): EvaluatorRecord => ({
   id: evaluator.id,
@@ -74,6 +213,42 @@ export const toEvaluatorRecord = (evaluator: Evaluator): EvaluatorRecord => ({
   config: evaluator.config,
   created_at: evaluator.version,
   updated_at: evaluator.version,
+});
+
+export const toPromptRecord = (prompt: {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  systemPrompt: string;
+  userTemplate: string;
+}): PromptRecord => ({
+  id: prompt.id,
+  name: prompt.name,
+  version: prompt.version,
+  description: prompt.description,
+  system_prompt: prompt.systemPrompt,
+  user_template: prompt.userTemplate,
+});
+
+export const toAgentRecord = (agent: {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  queryProcessor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+}): AgentRecord => ({
+  id: agent.id,
+  name: agent.name,
+  version: agent.version,
+  description: agent.description,
+  query_processor: agent.queryProcessor,
+  retriever: agent.retriever,
+  reranker: agent.reranker,
+  answerer: agent.answerer,
 });
 
 const toPipelineRecord = (target: ExperimentRun["target"]): SearchPipelineVersionRecord => ({

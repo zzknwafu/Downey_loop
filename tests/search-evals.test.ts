@@ -110,6 +110,61 @@ describe("search evaluator", () => {
     expect(run.layerMetrics.some((metric) => metric.metricName === "latency")).toBe(true);
     expect(run.layerMetrics.some((metric) => metric.metricName === "rerank_hit_at_k")).toBe(true);
   });
+
+  it("scores retrieval intent match on constrained healthy-meal search", () => {
+    const evalCase = sampleCases.find((item) => item.caseId === "food_004")!;
+    const run = buildRun(
+      sampleCases.findIndex((item) => item.caseId === "food_004"),
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      "推荐香煎鸡胸能量碗，高蛋白且比较清爽。",
+    );
+
+    const metric = run.layerMetrics.find((item) => item.metricName === "retrieval_intent_match");
+    expect(Number(metric?.score)).toBeGreaterThan(0.8);
+  });
+
+  it("fails eta guardrail and aggregated business guardrail on late top result", () => {
+    const evalCase = sampleCases.find((item) => item.caseId === "food_002")!;
+    const caseIndex = sampleCases.findIndex((item) => item.caseId === "food_002");
+    const lateCandidate = evalCase.retrievalCandidates.find((item) => item.id === "sku_f2_d")!;
+    const strongCandidate = evalCase.retrievalCandidates.find((item) => item.id === "sku_f2_a")!;
+
+    const run = buildRun(
+      caseIndex,
+      [strongCandidate, lateCandidate],
+      [lateCandidate, strongCandidate],
+      "推荐麻辣香锅，味道更重一些。",
+    );
+
+    const etaGuardrail = run.layerMetrics.find((item) => item.metricName === "delivery_eta_guardrail");
+    const businessGuardrail = run.layerMetrics.find((item) => item.metricName === "business_guardrail_pass");
+
+    expect(etaGuardrail?.score).toBe(0);
+    expect(businessGuardrail?.score).toBe(0);
+  });
+
+  it("separates trustworthiness from top-item consistency when answer drifts", () => {
+    const evalCase = sampleCases.find((item) => item.caseId === "grocery_004")!;
+    const caseIndex = sampleCases.findIndex((item) => item.caseId === "grocery_004");
+
+    const run = buildRun(
+      caseIndex,
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      [evalCase.retrievalCandidates[0]!, evalCase.retrievalCandidates[1]!],
+      "可以先看婴儿纸尿裤 XL 52 片，价格也更合适。",
+    );
+
+    const trustworthiness = run.layerMetrics.find(
+      (item) => item.metricName === "answer_trustworthiness",
+    );
+    const topConsistency = run.layerMetrics.find(
+      (item) => item.metricName === "answer_top_item_consistency",
+    );
+
+    expect(topConsistency?.score).toBe(0);
+    expect(Number(trustworthiness?.score)).toBeLessThan(1);
+  });
 });
 
 describe("experiment comparison", () => {
@@ -234,5 +289,47 @@ describe("experiment comparison", () => {
 
     expect(result.headline).toContain("budget guardrail");
     expect(result.driverNegative).toContain("budget_guardrail");
+  });
+
+  it("attributes regression to delivery eta guardrail before generic rerank hit drop", () => {
+    const overallDeltas: MetricDelta[] = [
+      {
+        metricName: "business_goal_alignment",
+        layer: "overall",
+        baselineValue: 0.84,
+        candidateValue: 0.57,
+        delta: -0.27,
+      },
+    ];
+    const layerDeltas: MetricDelta[] = [
+      {
+        metricName: "delivery_eta_guardrail",
+        layer: "rerank",
+        baselineValue: 1,
+        candidateValue: 0,
+        delta: -1,
+      },
+      {
+        metricName: "rerank_hit_at_k",
+        layer: "rerank",
+        baselineValue: 1,
+        candidateValue: 0.9,
+        delta: -0.1,
+      },
+    ];
+
+    const result = buildRootCauseSummary(
+      overallDeltas,
+      layerDeltas,
+      {
+        retrieval: [],
+        rerank: ["food_002"],
+        answer: [],
+      },
+      ["food_002"],
+    );
+
+    expect(result.headline).toContain("delivery-ETA guardrail");
+    expect(result.driverNegative).toContain("delivery_eta_guardrail");
   });
 });

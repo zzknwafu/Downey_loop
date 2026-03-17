@@ -11,7 +11,7 @@ import {
 } from "./types.js";
 import { buildExperimentCaseRun, summarizeExperimentRun } from "./experiment.js";
 import { builtInEvaluators } from "./evaluators.js";
-import { toTargetRef } from "./targets.js";
+import { toTargetRef, toTargetSelection } from "./targets.js";
 
 const now = "2026-03-17T00:00:00.000Z";
 const primaryDatasetId = "dataset_ai_search_core_001";
@@ -544,6 +544,17 @@ const grocerySearchCases: EvalCase[] = [
 
 export const sampleCases: EvalCase[] = [...foodSearchCases, ...grocerySearchCases];
 
+const caseById = new Map(sampleCases.map((item) => [item.caseId, item]));
+
+const pickCases = (...caseIds: string[]): EvalCase[] =>
+  caseIds.map((caseId) => {
+    const match = caseById.get(caseId);
+    if (!match) {
+      throw new Error(`Missing sample case ${caseId}`);
+    }
+    return match;
+  });
+
 export const sampleDatasets: Dataset[] = [
   {
     id: primaryDatasetId,
@@ -589,11 +600,59 @@ export const sampleDatasets: Dataset[] = [
     createdAt: now,
     updatedAt: now,
   },
+  {
+    id: "dataset_retrieval_intent_001",
+    name: "AI 搜意图命中评估集",
+    description:
+      "按 retrieval evaluator 场景组织，覆盖预算、口味、类目、低糖、高蛋白等显式意图与硬约束。",
+    datasetType: "ideal_output",
+    schema: datasetColumns.ideal_output,
+    cases: pickCases("food_001", "food_004", "grocery_001", "grocery_003"),
+    version: "0.3.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "dataset_rerank_guardrail_001",
+    name: "AI 搜排序护栏评估集",
+    description:
+      "按 rerank evaluator 场景组织，重点验证 top-k、预算护栏、时效护栏、库存约束和偏好保持。",
+    datasetType: "ideal_output",
+    schema: datasetColumns.ideal_output,
+    cases: pickCases("food_002", "food_003", "grocery_002", "grocery_004"),
+    version: "0.3.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "dataset_answer_trust_001",
+    name: "AI 搜答案可信度评估集",
+    description:
+      "按 answer evaluator 场景组织，聚焦正确性、基于候选作答、答案与 top1 一致性、是否需要追问。",
+    datasetType: "ideal_output",
+    schema: datasetColumns.ideal_output,
+    cases: pickCases("food_001", "food_002", "grocery_001", "grocery_004"),
+    version: "0.3.0",
+    createdAt: now,
+    updatedAt: now,
+  },
+  {
+    id: "dataset_business_goal_001",
+    name: "AI 搜业务目标对齐评估集",
+    description:
+      "按 overall evaluator 场景组织，验证点击、转化、停留、信任及关键业务护栏的综合表现。",
+    datasetType: "ideal_output",
+    schema: datasetColumns.ideal_output,
+    cases: pickCases("food_001", "food_003", "grocery_002", "grocery_004"),
+    version: "0.3.0",
+    createdAt: now,
+    updatedAt: now,
+  },
 ];
 
 export const sampleEvaluators = builtInEvaluators;
 
-export const samplePrompts: PromptVersion[] = [
+const businessPrompts: PromptVersion[] = [
   {
     id: "prompt_food_search_v1",
     name: "外卖搜索回答 Prompt",
@@ -622,6 +681,150 @@ export const samplePrompts: PromptVersion[] = [
       retrieval_candidates: "json",
     },
   },
+];
+
+const migratedCozeLoopEvaluatorPrompts: PromptVersion[] = [
+  {
+    id: "prompt_eval_correctness_coze_v1",
+    name: "Coze Loop 正确性评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「正确性」，用于评估答案准确性与完整性。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出的正确性。请重点检查事实准确性、信息完整性、逻辑一致性与术语是否精确，只基于输入、输出与参考答案作判断。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n<reference_output>\n{{reference_output}}\n</reference_output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      output: "string",
+      reference_output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_hallucination_coze_v1",
+    name: "Coze Loop 幻觉现象评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「幻觉现象」，用于评估回答是否脱离候选或上下文。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出是否存在幻觉现象。请核对回答中的每个关键事实是否都能被上下文、候选结果或参考答案支持。",
+    userTemplate:
+      "<context>\n{{context}}\n</context>\n\n<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n<reference_output>\n{{reference_output}}\n</reference_output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      context: "string",
+      input: "string",
+      output: "string",
+      reference_output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_conciseness_coze_v1",
+    name: "Coze Loop 简洁性评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「简洁性」，用于评估推荐回答是否简洁直接。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出的简洁性。请检查回答是否只包含必要信息，避免冗余解释、客套话与不必要背景。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_helpfulness_coze_v1",
+    name: "Coze Loop 有益性评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「有益性」，用于评估回答是否真的帮助用户做决策。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出的有益性。请判断回答是否真正解决用户问题、是否有助于做出下单或购买决策。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n<reference_output>\n{{reference_output}}\n</reference_output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      output: "string",
+      reference_output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_detail_coze_v1",
+    name: "Coze Loop 细节性评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「细节性」，用于评估推荐理由是否覆盖价格、库存、时效等关键信息。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出的细节性。请重点检查回答是否给出了足够的业务细节，例如价格、库存、配送时效、规格、口味或适用人群。",
+    userTemplate:
+      "<context>\n{{context}}\n</context>\n\n<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      context: "string",
+      input: "string",
+      output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_reference_alignment_coze_v1",
+    name: "Coze Loop 参考答案遵从度评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「参考答案遵从度」，用于评估回答与理想输出的一致程度。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出对参考答案的遵从度。请比较输出与参考答案在推荐对象、关键事实和表达目标上的一致性。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<output>\n{{output}}\n</output>\n\n<reference_output>\n{{reference_output}}\n</reference_output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      output: "string",
+      reference_output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_instruction_following_coze_v1",
+    name: "Coze Loop 指令遵从度评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「指令遵从度」，用于评估预算、库存、时效等约束是否被遵守。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估模型输出的指令遵从度。请检查回答是否遵守用户明确提出的预算、库存、时效、口味、品类或健康约束。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<context>\n{{context}}\n</context>\n\n<output>\n{{output}}\n</output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      context: "string",
+      output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_agent_task_completion_coze_v1",
+    name: "Coze Loop Agent 任务完成度评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「Agent 任务完成度」，用于评估搜索链路是否成功完成业务目标。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估 Agent 的任务完成度。请判断这次搜索或导购任务是否成功满足用户目标，并兼顾业务护栏与结果可执行性。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<context>\n{{context}}\n</context>\n\n<output>\n{{output}}\n</output>\n\n<reference_output>\n{{reference_output}}\n</reference_output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      context: "string",
+      output: "string",
+      reference_output: "string",
+    },
+  },
+  {
+    id: "prompt_eval_agent_trajectory_coze_v1",
+    name: "Coze Loop Agent 轨迹质量评估 Prompt",
+    version: "1.0.0-coze",
+    description: "迁移自 Coze Loop evaluator template「Agent 轨迹质量」，用于评估是否该追问、是否存在多余步骤。",
+    systemPrompt:
+      "你是一位专业的数据标注员，负责评估 Agent 轨迹质量。请判断当前轨迹是否高效、步骤是否必要，以及在证据不足时是否应该追问而不是直接回答。",
+    userTemplate:
+      "<input>\n{{input}}\n</input>\n\n<trajectory>\n{{trajectory}}\n</trajectory>\n\n<output>\n{{output}}\n</output>\n\n请输出结构化评估结果：score 和 reasoning。",
+    inputSchema: {
+      input: "string",
+      trajectory: "json",
+      output: "string",
+    },
+  },
+];
+
+export const samplePrompts: PromptVersion[] = [
+  ...businessPrompts,
+  ...migratedCozeLoopEvaluatorPrompts,
 ];
 
 export const baselinePipeline: SearchPipelineVersion = {
@@ -795,6 +998,7 @@ export const buildSampleExperiments = (): {
     datasetId: primaryDatasetId,
     evaluatorIds: sampleEvaluators.map((item) => item.id),
     targetRef: toTargetRef(baselinePipeline),
+    targetSelection: toTargetSelection(baselinePipeline),
     pipelineVersionId: baselinePipeline.id,
     target: baselinePipeline,
     status: "FINISHED",
@@ -809,6 +1013,7 @@ export const buildSampleExperiments = (): {
     datasetId: primaryDatasetId,
     evaluatorIds: sampleEvaluators.map((item) => item.id),
     targetRef: toTargetRef(candidatePipeline),
+    targetSelection: toTargetSelection(candidatePipeline),
     pipelineVersionId: candidatePipeline.id,
     target: candidatePipeline,
     status: "FINISHED",

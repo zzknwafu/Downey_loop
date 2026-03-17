@@ -3,6 +3,7 @@ import {
   AgentVersion,
   Dataset,
   DatasetColumn,
+  EditableDatasetCase,
   Evaluator,
   ExperimentComparison,
   ExperimentRun,
@@ -18,6 +19,14 @@ import {
   sampleEvaluators,
   samplePrompts,
 } from "../domain/sample-data.js";
+import {
+  createDatasetCaseDefinition,
+  createDatasetDefinition,
+  deleteDatasetCaseDefinition,
+  replaceDatasetCasesDefinition,
+  updateDatasetCaseDefinition,
+  updateDatasetDefinition,
+} from "../domain/datasets.js";
 import { FileBackedLocalStore } from "../infra/store.js";
 import { ExperimentRunner, PipelineExecutor } from "../runner/experiment-runner.js";
 
@@ -48,6 +57,19 @@ export interface CreateDatasetRequest {
   description: string;
   datasetType: Dataset["datasetType"];
   schema: DatasetColumn[];
+  sampleCount: number;
+}
+
+export interface UpdateDatasetRequest {
+  name: string;
+  description: string;
+  datasetType: Dataset["datasetType"];
+  schema: DatasetColumn[];
+  sampleCount: number;
+}
+
+export interface ReplaceDatasetCasesRequest {
+  cases: EditableDatasetCase[];
 }
 
 export interface CreateEvaluatorRequest {
@@ -65,12 +87,6 @@ const now = () => new Date().toISOString();
 const customId = (prefix: string) =>
   `${prefix}_custom_${Date.now().toString(36)}_${Math.random().toString(36).slice(2, 8)}`;
 
-const DATASET_REQUIRED_FIELDS: Record<Dataset["datasetType"], string[]> = {
-  ideal_output: ["input", "reference_output", "context"],
-  workflow: ["input", "workflow_output", "expected_steps"],
-  trace_monitor: ["trace_id", "final_output", "trajectory"],
-};
-
 const VALID_LAYERS = new Set<Evaluator["layer"]>(["retrieval", "rerank", "answer", "overall"]);
 const VALID_FAMILIES = new Set<Evaluator["family"]>(["model", "code"]);
 const VALID_METRIC_TYPES = new Set<Evaluator["metricType"]>(["binary", "continuous", "categorical"]);
@@ -84,33 +100,6 @@ const VALID_CODE_STRATEGIES = new Set<NonNullable<Evaluator["codeStrategy"]>>([
 const ensureNonEmpty = (value: string, fieldName: string) => {
   if (value.trim().length === 0) {
     throw new Error(`${fieldName} is required`);
-  }
-};
-
-const validateSchema = (
-  datasetType: Dataset["datasetType"],
-  schema: DatasetColumn[],
-) => {
-  if (schema.length === 0) {
-    throw new Error("Dataset schema must include at least one field");
-  }
-
-  const seen = new Set<string>();
-  for (const field of schema) {
-    ensureNonEmpty(field.name, "Schema field name");
-    ensureNonEmpty(field.description, `Schema field ${field.name} description`);
-    if (seen.has(field.name)) {
-      throw new Error(`Duplicate schema field: ${field.name}`);
-    }
-    seen.add(field.name);
-  }
-
-  const requiredFields = DATASET_REQUIRED_FIELDS[datasetType];
-  const missingFields = requiredFields.filter((field) => !seen.has(field));
-  if (missingFields.length > 0) {
-    throw new Error(
-      `Dataset type ${datasetType} requires schema fields: ${missingFields.join(", ")}`,
-    );
   }
 };
 
@@ -181,24 +170,93 @@ export class EvalLoopService {
   }
 
   async createDataset(request: CreateDatasetRequest): Promise<Dataset> {
-    ensureNonEmpty(request.name, "Dataset name");
-    ensureNonEmpty(request.description, "Dataset description");
-    validateSchema(request.datasetType, request.schema);
-
-    const timestamp = now();
-    const dataset: Dataset = {
+    const dataset = createDatasetDefinition({
       id: customId("dataset"),
-      name: request.name.trim(),
-      description: request.description.trim(),
+      name: request.name,
+      description: request.description,
       datasetType: request.datasetType,
       schema: request.schema,
-      cases: [],
-      version: "0.1.0",
-      createdAt: timestamp,
-      updatedAt: timestamp,
-    };
+      sampleCount: request.sampleCount,
+      timestamp: now(),
+    });
 
     await this.store.upsertDataset(dataset);
+    return dataset;
+  }
+
+  async updateDataset(datasetId: string, request: UpdateDatasetRequest): Promise<Dataset> {
+    const current = await this.requireDataset(datasetId);
+    const dataset = updateDatasetDefinition({
+      current,
+      name: request.name,
+      description: request.description,
+      datasetType: request.datasetType,
+      schema: request.schema,
+      sampleCount: request.sampleCount,
+      timestamp: now(),
+    });
+
+    await this.store.upsertDataset(dataset);
+    return dataset;
+  }
+
+  async replaceDatasetCases(
+    datasetId: string,
+    request: ReplaceDatasetCasesRequest,
+  ): Promise<Dataset<EditableDatasetCase>> {
+    const current = (await this.requireDataset(datasetId)) as unknown as Dataset<EditableDatasetCase>;
+    const dataset = replaceDatasetCasesDefinition({
+      current,
+      cases: request.cases,
+      timestamp: now(),
+    });
+
+    await this.store.upsertDataset(dataset as unknown as Dataset);
+    return dataset;
+  }
+
+  async createDatasetCase(
+    datasetId: string,
+    item: EditableDatasetCase,
+  ): Promise<Dataset<EditableDatasetCase>> {
+    const current = (await this.requireDataset(datasetId)) as unknown as Dataset<EditableDatasetCase>;
+    const dataset = createDatasetCaseDefinition({
+      current,
+      item,
+      timestamp: now(),
+    });
+
+    await this.store.upsertDataset(dataset as unknown as Dataset);
+    return dataset;
+  }
+
+  async updateDatasetCase(
+    datasetId: string,
+    item: EditableDatasetCase,
+  ): Promise<Dataset<EditableDatasetCase>> {
+    const current = (await this.requireDataset(datasetId)) as unknown as Dataset<EditableDatasetCase>;
+    const dataset = updateDatasetCaseDefinition({
+      current,
+      item,
+      timestamp: now(),
+    });
+
+    await this.store.upsertDataset(dataset as unknown as Dataset);
+    return dataset;
+  }
+
+  async deleteDatasetCase(
+    datasetId: string,
+    caseId: string,
+  ): Promise<Dataset<EditableDatasetCase>> {
+    const current = (await this.requireDataset(datasetId)) as unknown as Dataset<EditableDatasetCase>;
+    const dataset = deleteDatasetCaseDefinition({
+      current,
+      caseId,
+      timestamp: now(),
+    });
+
+    await this.store.upsertDataset(dataset as unknown as Dataset);
     return dataset;
   }
 
@@ -330,6 +388,10 @@ export class EvalLoopService {
 
   async getExperiment(experimentId: string) {
     return this.store.getExperiment(experimentId);
+  }
+
+  async getDataset(datasetId: string) {
+    return this.store.getDataset(datasetId);
   }
 
   async getTrace(traceId: string) {

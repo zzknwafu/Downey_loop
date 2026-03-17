@@ -6,3 +6,4 @@ dist/
 coverage/
 *.sqlite
 data/
+.codex-app-ssr.mjs

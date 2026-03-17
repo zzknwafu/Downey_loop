@@ -55,6 +55,50 @@ export type DatasetCaseRecord =
   | WorkflowDatasetCase
   | TraceMonitorDatasetCase;
 
+export type CreateDatasetCaseInput = DatasetCaseRecord;
+export type UpdateDatasetCaseInput = DatasetCaseRecord;
+export interface ReplaceDatasetCasesInput {
+  cases: DatasetCaseRecord[];
+}
+export type DatasetSynthesisSource = "dataset" | "online";
+export type DatasetSynthesisDirection =
+  | "generalize"
+  | "augment_failures"
+  | "augment_guardrails"
+  | "align_online_distribution";
+
+export interface DatasetSynthesisSuggestion {
+  id: string;
+  title: string;
+  detail: string;
+}
+
+export interface DatasetSynthesisColumnInput {
+  name: string;
+  description: string;
+  generation_requirement: string;
+}
+
+export interface SynthesizeDatasetInput {
+  dataset_id: string;
+  source: DatasetSynthesisSource;
+  direction: DatasetSynthesisDirection;
+  scenario_description: string;
+  use_case_description: string;
+  seed_source_ref: string;
+  columns: DatasetSynthesisColumnInput[];
+  sample_count: number;
+}
+
+export interface DatasetSynthesisResult {
+  dataset_id: string;
+  source: DatasetSynthesisSource;
+  direction: DatasetSynthesisDirection;
+  items: DatasetCaseRecord[];
+  status: "draft";
+  created_at: string;
+}
+
 export interface DatasetRecord {
   id: string;
   name: string;
@@ -65,6 +109,56 @@ export interface DatasetRecord {
   version: string;
   created_at: string;
   updated_at: string;
+}
+
+export interface PromptRecord {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  system_prompt: string;
+  user_template: string;
+}
+
+export interface AgentRecord {
+  id: string;
+  name: string;
+  version: string;
+  description?: string;
+  query_processor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+}
+
+export interface CreatePromptInput {
+  name: string;
+  description?: string;
+  system_prompt: string;
+  user_template: string;
+}
+
+export interface CreateAgentInput {
+  name: string;
+  description?: string;
+  query_processor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+}
+
+export interface PromptPreviewInput {
+  input: string;
+  variables?: Record<string, string>;
+}
+
+export interface PromptPreviewResult {
+  prompt_id: string;
+  input: string;
+  rendered_system_prompt: string;
+  rendered_user_prompt: string;
+  output_preview: string;
+  created_at: string;
 }
 
 export interface EvaluatorRecord {
@@ -247,6 +341,15 @@ export interface CreateDatasetInput {
   name: string;
   description: string;
   dataset_type: DatasetType;
+  sample_count: number;
+  schema: DatasetSchemaField[];
+}
+
+export interface UpdateDatasetInput {
+  name: string;
+  description: string;
+  dataset_type: DatasetType;
+  sample_count: number;
   schema: DatasetSchemaField[];
 }
 

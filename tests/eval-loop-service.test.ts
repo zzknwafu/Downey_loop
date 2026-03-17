@@ -91,6 +91,7 @@ describe("eval loop service", () => {
       name: "Custom Dataset",
       description: "for API create flow",
       datasetType: "ideal_output",
+      sampleCount: 12,
       schema: [
         {
           name: "input",
@@ -135,6 +136,243 @@ describe("eval loop service", () => {
     expect(traces.length).toBeGreaterThan(0);
     expect(await service.getTrace(traces[0]!.traceId)).toBeDefined();
     expect(await service.getLatestComparison()).toBeDefined();
+  });
+
+  it("updates dataset metadata and schema while preserving stored identity", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-update-dataset-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    const dataset = await service.createDataset({
+      name: "Custom Dataset",
+      description: "for update flow",
+      datasetType: "ideal_output",
+      sampleCount: 12,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "input",
+        },
+        {
+          name: "reference_output",
+          dataType: "String",
+          required: false,
+          description: "reference output",
+        },
+        {
+          name: "context",
+          dataType: "JSON",
+          required: false,
+          description: "context",
+        },
+      ],
+    });
+
+    const updated = await service.updateDataset(dataset.id, {
+      name: "Workflow Dataset",
+      description: "updated workflow schema",
+      datasetType: "workflow",
+      sampleCount: 14,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "workflow input",
+        },
+        {
+          name: "workflow_output",
+          dataType: "JSON",
+          required: true,
+          description: "workflow result",
+        },
+        {
+          name: "expected_steps",
+          dataType: "JSON",
+          required: false,
+          description: "expected steps",
+        },
+      ],
+    });
+
+    const stored = await service.getDataset(dataset.id);
+
+    expect(updated.id).toBe(dataset.id);
+    expect(updated.createdAt).toBe(dataset.createdAt);
+    expect(updated.updatedAt).not.toBe(dataset.updatedAt);
+    expect(updated.datasetType).toBe("workflow");
+    expect(stored?.name).toBe("Workflow Dataset");
+    expect(stored?.schema).toHaveLength(3);
+  });
+
+  it("rejects dataset create requests when sample count is below minimum", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-dataset-min-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    await expect(
+      service.createDataset({
+        name: "Too Small Dataset",
+        description: "invalid sample count",
+        datasetType: "ideal_output",
+        sampleCount: 9,
+        schema: [
+          {
+            name: "input",
+            dataType: "String",
+            required: true,
+            description: "input",
+          },
+          {
+            name: "reference_output",
+            dataType: "String",
+            required: false,
+            description: "reference output",
+          },
+          {
+            name: "context",
+            dataType: "JSON",
+            required: false,
+            description: "context",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/at least 10/);
+  });
+
+  it("supports dataset case create update and delete through the service", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-dataset-cases-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    const dataset = await service.createDataset({
+      name: "Editable Dataset",
+      description: "case editing flow",
+      datasetType: "ideal_output",
+      sampleCount: 12,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "input",
+        },
+        {
+          name: "reference_output",
+          dataType: "String",
+          required: false,
+          description: "reference output",
+        },
+        {
+          name: "context",
+          dataType: "JSON",
+          required: false,
+          description: "context",
+        },
+      ],
+    });
+
+    const created = await service.createDatasetCase(dataset.id, {
+      caseId: "case_001",
+      input: "用户输入",
+      referenceOutput: "参考答案",
+      context: { channel: "food_delivery" },
+    });
+    expect(created.cases).toHaveLength(1);
+
+    const updated = await service.updateDatasetCase(dataset.id, {
+      caseId: "case_001",
+      input: "更新输入",
+      referenceOutput: "更新参考答案",
+      context: { channel: "grocery" },
+    });
+    expect(updated.cases[0]).toMatchObject({
+      caseId: "case_001",
+      input: "更新输入",
+      referenceOutput: "更新参考答案",
+    });
+
+    const deleted = await service.deleteDatasetCase(dataset.id, "case_001");
+    expect(deleted.cases).toHaveLength(0);
+  });
+
+  it("rejects dataset type change through the service when editable cases already exist", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-dataset-type-guard-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    const dataset = await service.createDataset({
+      name: "Editable Dataset",
+      description: "type guard flow",
+      datasetType: "ideal_output",
+      sampleCount: 12,
+      schema: [
+        {
+          name: "input",
+          dataType: "String",
+          required: true,
+          description: "input",
+        },
+        {
+          name: "reference_output",
+          dataType: "String",
+          required: false,
+          description: "reference output",
+        },
+        {
+          name: "context",
+          dataType: "JSON",
+          required: false,
+          description: "context",
+        },
+      ],
+    });
+
+    await service.createDatasetCase(dataset.id, {
+      caseId: "case_001",
+      input: "用户输入",
+      referenceOutput: "参考答案",
+      context: {},
+    });
+
+    await expect(
+      service.updateDataset(dataset.id, {
+        name: "Workflow Dataset",
+        description: "updated workflow schema",
+        datasetType: "workflow",
+        sampleCount: 12,
+        schema: [
+          {
+            name: "input",
+            dataType: "String",
+            required: true,
+            description: "workflow input",
+          },
+          {
+            name: "workflow_output",
+            dataType: "JSON",
+            required: true,
+            description: "workflow result",
+          },
+          {
+            name: "expected_steps",
+            dataType: "JSON",
+            required: false,
+            description: "expected steps",
+          },
+        ],
+      }),
+    ).rejects.toThrow(/Cannot change datasetType/);
   });
 
   it("creates lightweight prompt and agent targets for experiments", async () => {

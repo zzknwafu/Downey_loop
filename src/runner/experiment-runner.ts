@@ -10,6 +10,7 @@ import {
   SearchPipelineVersion,
   StartExperimentInput,
 } from "../domain/types.js";
+import { toTargetSelection } from "../domain/targets.js";
 
 export type PipelineExecutor = (
   evalCase: EvalCase,
@@ -98,6 +99,7 @@ export class ExperimentRunner {
         type: "agent",
         version: input.target.version,
       },
+      targetSelection: input.targetSelection ?? toTargetSelection(input.target),
       pipelineVersionId: input.target.id,
       status: job.status === "completed" ? "FINISHED" : "FAILED",
       startedAt: job.startedAt,

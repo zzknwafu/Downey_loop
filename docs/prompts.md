@@ -22,7 +22,7 @@ Date: 2026-03-16
 - 三类数据集：普通 / Workflow / Trace 监控
 - 两类评估器：模型评估 / 代码评估
 - 单实验与 AB 实验
-- Trace 下钻
+- 实验内 Trace 下钻
 - 本地优先 + TypeScript 技术栈
 
 ### Requirements
@@ -200,11 +200,11 @@ AI 搜索层级包括：
 
 产品要求前端支持：
 
-- 评测集页面
+- Prompt 页面
+- 数据集页面
 - 评估器页面
 - 实验运行页面
 - AB 实验页面
-- Trace 查看页面
 
 页面组织应符合 AI 搜索流程逻辑。
 
@@ -212,15 +212,18 @@ AI 搜索层级包括：
 
 - 使用 React + TypeScript
 - 左侧导航清晰
-- 实验分为“实验运行”和“AB 实验”二级菜单
+- Prompt 页面保留 `Prompt template + Preview and debug`
+- Prompt 页面不强制实现 `common configuration`
 - 评估器页以 AI 搜索流程为主视图
 - 新建评估器通过弹窗先选择 LLM 或 Code
 - 数据集页支持三类评测集
+- 实验板块统一承载评测、观测、trace 与统计
 
 ### Deliverables
 
 - 主要页面骨架
 - 列表与详情视图
+- Prompt template / preview-debug 页面
 - 创建评测集 / 评估器弹窗
 - 实验对比与 trace 下钻页面
 
@@ -230,3 +233,49 @@ AI 搜索层级包括：
 - 不做与产品主线无关的复杂 UI
 - 优先保证信息架构清晰
 - 只消费共享 contract，不修改 `src/domain/types.ts`、`src/domain/evaluators.ts`、`src/domain/comparison.ts`
+
+## 6. Synthesis Agent
+
+### Goal
+
+将 `智能合成` 作为独立侧线能力推进，不阻塞主线 Dataset / Experiment / Prompt 开发。
+
+### When to use
+
+在需要实现 `智能合成` 的向导、draft 流程、方向性字段、草稿预览和后续并入方案时使用。
+
+### Context
+
+智能合成当前不是主线功能，但保留为后续增强方向。它应遵循：
+
+- 两步向导：
+  - `合成场景及来源`
+  - `合成样本配置`
+- 合成具有明确方向性：
+  - `generalize`
+  - `augment_failures`
+  - `augment_guardrails`
+  - `align_online_distribution`
+- 合成结果先进入 `draft`
+- 不直接写入正式 `Evaluation set`
+
+### Requirements
+
+- 独立实现智能合成流程
+- 不阻塞正式 Dataset 管理
+- 能输出 draft 结构
+- 能描述后续“确认并入 Evaluation set”的流程
+
+### Deliverables
+
+- 智能合成向导
+- synthesis draft 结果结构
+- 草稿预览页
+- 并入正式 dataset 的方案说明
+
+### Constraints
+
+- 不修改 `src/domain/types.ts`
+- 不修改 `src/domain/datasets.ts`
+- 不修改 `src/domain/comparison.ts`
+- 不改变主线 Dataset / Experiment 的验收范围

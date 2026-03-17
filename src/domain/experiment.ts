@@ -8,7 +8,7 @@ import {
   SearchPipelineVersion,
 } from "./types.js";
 import { evaluateSearchCase } from "./evaluators.js";
-import { toTargetRef } from "./targets.js";
+import { toTargetRef, toTargetSelection } from "./targets.js";
 
 const averageMetrics = (metrics: MetricResult[]): Record<string, number> => {
   const aggregate = new Map<string, { sum: number; count: number }>();
@@ -128,6 +128,7 @@ export const createEmptyExperimentRun = (
 ): ExperimentRun => ({
   experimentId,
   targetRef: toTargetRef(target),
+  targetSelection: toTargetSelection(target),
   target,
   status: "CREATED",
   summary: {

@@ -61,6 +61,34 @@ export interface DatasetColumn {
   description: string;
 }
 
+export interface IdealOutputDatasetCaseValue {
+  caseId: string;
+  input: string;
+  referenceOutput: string;
+  context: Record<string, unknown>;
+}
+
+export interface WorkflowDatasetCaseValue {
+  caseId: string;
+  input: string;
+  workflowOutput: Record<string, unknown>;
+  expectedSteps: string[];
+  context?: Record<string, unknown>;
+}
+
+export interface TraceMonitorDatasetCaseValue {
+  caseId: string;
+  traceId: string;
+  finalOutput: string;
+  trajectory: Array<Record<string, unknown>>;
+  context?: Record<string, unknown>;
+}
+
+export type EditableDatasetCase =
+  | IdealOutputDatasetCaseValue
+  | WorkflowDatasetCaseValue
+  | TraceMonitorDatasetCaseValue;
+
 export interface Dataset<TCase = EvalCase> {
   id: string;
   name: string;
@@ -109,6 +137,13 @@ export interface TargetRef {
   id: string;
   type: TargetType;
   version: string;
+}
+
+export interface ExperimentTargetSelection {
+  id: string;
+  type: TargetType;
+  version: string;
+  label: string;
 }
 
 export interface MetricDefinition {
@@ -186,6 +221,7 @@ export interface ExperimentRun {
   datasetId?: string;
   evaluatorIds?: string[];
   targetRef?: TargetRef;
+  targetSelection?: ExperimentTargetSelection;
   pipelineVersionId?: string;
   target: SearchPipelineVersion;
   status: ExperimentStatus;
@@ -272,6 +308,7 @@ export interface StartExperimentInput {
   dataset: Dataset;
   target: SearchPipelineVersion;
   evaluators: Evaluator[];
+  targetSelection?: ExperimentTargetSelection;
 }
 
 export interface LocalStoreSnapshot {

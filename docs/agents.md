@@ -5,11 +5,12 @@ Date: 2026-03-17
 
 ## 1. Collaboration Model
 
-当前项目建议采用三 agent 并行协作模式：
+当前项目建议采用四 agent 并行协作模式：
 
 - Agent 1：Core / Domain
 - Agent 2：Frontend
 - Agent 3：Infra / Integration
+- Agent 4：Synthesis
 
 当前阶段最重要的不是继续扩功能，而是锁死共享核心的 ownership，避免多个 agent 同时修改同一层定义。
 
@@ -181,19 +182,62 @@ Date: 2026-03-17
 - 本地可稳定启动
 - Dataset / Evaluator / Experiment / Trace 能走通最小联调闭环
 
-## 5. Collaboration Rules
+## 5. Agent 4 — Synthesis
 
-### 5.1 Single Source of Truth
+### Role
+
+负责 `智能合成` 这一条侧线能力，避免其继续打断主线 `Targets / Dataset / Evaluator / Experiment` 开发。
+
+### Responsibilities
+
+- 智能合成产品流转定义
+- synthesis draft 结构
+- 合成场景 / 来源 / 方向配置
+- 合成样本草稿预览与并入方案
+- 与主线 Dataset 的边界设计
+
+### In Scope
+
+- `智能合成` 页面和向导逻辑
+- synthesis draft 数据结构
+- synthesis contract 需求整理
+- draft -> Evaluation set 的后续合并流程设计
+
+### Out of Scope
+
+- 修改正式 Dataset 领域定义
+- 修改 Experiment 核心结构
+- 修改 Evaluator / Comparison 逻辑
+- 修改 `src/domain/types.ts`
+- 修改 `src/domain/evaluators.ts`
+- 修改 `src/domain/comparison.ts`
+- 修改 `src/domain/datasets.ts`
+
+### Rules
+
+- 智能合成当前不是主线功能，不得阻塞主线交付
+- 合成结果先进入 `draft`，不直接写入正式 dataset
+- 如果需要新增共享字段，必须回到 Agent 1 收口
+
+### Success Criteria
+
+- 智能合成可作为独立侧线推进
+- 即使 synthesis 暂停，主线 Dataset / Experiment 仍可独立交付
+
+## 6. Collaboration Rules
+
+### 6.1 Single Source of Truth
 
 产品定义以文档为准，不以页面现状或临时 mock 为准。
 
-### 5.2 Field Ownership
+### 6.2 Field Ownership
 
 - 领域对象和字段定义归 Agent 1
 - 交互与展示归 Agent 2
 - API 收口、联调和运行方式归 Agent 3
+- 智能合成的独立流程与草稿逻辑归 Agent 4
 
-### 5.3 Critical File Ownership
+### 6.3 Critical File Ownership
 
 以下文件必须指定单一 owner，其他 agent 不得直接修改：
 
@@ -223,13 +267,17 @@ Date: 2026-03-17
   - `src/web/view-model.ts`
   - `src/web/api.ts` 的消费端逻辑
 
+- Agent 4 only
+  - `智能合成` 侧线需求文档与独立实现文件
+  - 不得直接修改 Agent 1 / 2 / 3 的核心 owner 文件
+
 说明：
 
 - Agent 2 只能消费共享 contract，不定义领域对象
 - Agent 3 只能适配 domain 到 contract，不修改 domain 定义
 - 任何对共享核心文件的修改，都必须由 Agent 1 收口
 
-### 5.4 Current Conflict Audit
+### 6.4 Current Conflict Audit
 
 当前工作区已经出现过典型冲突信号：
 
@@ -239,7 +287,7 @@ Date: 2026-03-17
 
 这些都属于共享核心被多线程同时触碰的表现。后续必须按 owner 表执行。
 
-### 5.5 Escalation Rule
+### 6.5 Escalation Rule
 
 出现以下情况时，应回到主 agent 收口：
 
@@ -250,7 +298,7 @@ Date: 2026-03-17
 - 需要修改 evaluator 合法性规则
 - 需要修改任何 `Critical File Ownership` 中声明为别的 agent 所有的文件
 
-### 5.6 Change Protocol
+### 6.6 Change Protocol
 
 所有 agent 按下面的协议协作：
 

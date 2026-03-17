@@ -4,25 +4,45 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
+  AgentRecord,
   BootstrapResponse,
   CodeEvaluatorStrategy,
+  CreateAgentInput,
   CreateComparisonInput,
+  CreateDatasetCaseInput,
   CreateDatasetInput,
   CreateEvaluatorInput,
   CreateExperimentInput,
+  CreatePromptInput,
+  DatasetCaseRecord,
   DatasetSchemaField,
+  DatasetSynthesisColumnInput,
+  DatasetSynthesisDirection,
+  DatasetSynthesisResult,
+  DatasetSynthesisSource,
   DatasetType,
   EvaluatorFamily,
   LayerName,
   MetricType,
+  PromptPreviewInput,
+  PromptPreviewResult,
+  PromptRecord,
+  ReplaceDatasetCasesInput,
+  SynthesizeDatasetInput,
+  UpdateDatasetInput,
+  UpdateDatasetCaseInput,
 } from "../shared/contracts.js";
 import { FileBackedLocalStore } from "../infra/store.js";
 import { createReferencePipelineExecutor, EvalLoopService } from "../services/eval-loop-service.js";
 import {
+  toAgentRecord,
   toComparisonRecord,
+  toEditableDatasetCase,
+  toDatasetCaseRecord,
   toDatasetRecord,
   toEvaluatorRecord,
   toExperimentRunRecord,
+  toPromptRecord,
   toTraceRunRecord,
 } from "./contract-adapter.js";
 import { loadConfig } from "./config.js";
@@ -44,10 +64,8 @@ const mimeTypes: Record<string, string> = {
 };
 
 const config = loadConfig(rootDir);
-const service = new EvalLoopService(
-  new FileBackedLocalStore(config.storeFilePath),
-  createReferencePipelineExecutor(),
-);
+const store = new FileBackedLocalStore(config.storeFilePath);
+const service = new EvalLoopService(store, createReferencePipelineExecutor());
 const ready = service.seedDefaults();
 
 const datasetTypes = new Set<DatasetType>(["ideal_output", "workflow", "trace_monitor"]);
@@ -64,7 +82,7 @@ const codeStrategies = new Set<CodeEvaluatorStrategy>([
 const withCors = (res: ServerResponse) => {
   res.setHeader("Access-Control-Allow-Origin", "*");
   res.setHeader("Access-Control-Allow-Headers", "Content-Type");
-  res.setHeader("Access-Control-Allow-Methods", "GET,POST,OPTIONS");
+  res.setHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
 };
 
 const sendJson = (res: ServerResponse, statusCode: number, payload: unknown) => {
@@ -98,6 +116,12 @@ const isSchemaField = (value: unknown): value is DatasetSchemaField =>
   typeof value.required === "boolean" &&
   typeof value.description === "string";
 
+const isSynthesisColumn = (value: unknown): value is DatasetSynthesisColumnInput =>
+  isObject(value) &&
+  typeof value.name === "string" &&
+  typeof value.description === "string" &&
+  typeof value.generation_requirement === "string";
+
 const parseDatasetInput = (payload: unknown): CreateDatasetInput | null => {
   if (!isObject(payload)) {
     return null;
@@ -108,6 +132,8 @@ const parseDatasetInput = (payload: unknown): CreateDatasetInput | null => {
     typeof payload.description !== "string" ||
     typeof payload.dataset_type !== "string" ||
     !datasetTypes.has(payload.dataset_type as DatasetType) ||
+    typeof payload.sample_count !== "number" ||
+    !Number.isInteger(payload.sample_count) ||
     !Array.isArray(payload.schema) ||
     !payload.schema.every(isSchemaField)
   ) {
@@ -118,7 +144,250 @@ const parseDatasetInput = (payload: unknown): CreateDatasetInput | null => {
     name: payload.name,
     description: payload.description,
     dataset_type: payload.dataset_type as DatasetType,
+    sample_count: payload.sample_count,
     schema: payload.schema,
+  };
+};
+
+const parsePromptInput = (payload: unknown): CreatePromptInput | null => {
+  if (
+    !isObject(payload) ||
+    typeof payload.name !== "string" ||
+    typeof payload.system_prompt !== "string" ||
+    typeof payload.user_template !== "string" ||
+    (payload.description !== undefined && typeof payload.description !== "string")
+  ) {
+    return null;
+  }
+
+  return {
+    name: payload.name,
+    description: payload.description,
+    system_prompt: payload.system_prompt,
+    user_template: payload.user_template,
+  };
+};
+
+const parsePromptPreviewInput = (payload: unknown): PromptPreviewInput | null => {
+  if (
+    !isObject(payload) ||
+    typeof payload.input !== "string" ||
+    (payload.variables !== undefined &&
+      (!isObject(payload.variables) ||
+        Object.values(payload.variables).some((item) => typeof item !== "string")))
+  ) {
+    return null;
+  }
+
+  return {
+    input: payload.input,
+    variables: payload.variables as Record<string, string> | undefined,
+  };
+};
+
+const parseAgentInput = (payload: unknown): CreateAgentInput | null => {
+  if (
+    !isObject(payload) ||
+    typeof payload.name !== "string" ||
+    typeof payload.query_processor !== "string" ||
+    typeof payload.retriever !== "string" ||
+    typeof payload.reranker !== "string" ||
+    typeof payload.answerer !== "string" ||
+    (payload.description !== undefined && typeof payload.description !== "string")
+  ) {
+    return null;
+  }
+
+  return {
+    name: payload.name,
+    description: payload.description,
+    query_processor: payload.query_processor,
+    retriever: payload.retriever,
+    reranker: payload.reranker,
+    answerer: payload.answerer,
+  };
+};
+
+const parseUpdateDatasetInput = (payload: unknown): UpdateDatasetInput | null => {
+  const parsed = parseDatasetInput(payload);
+  if (!parsed) {
+    return null;
+  }
+
+  return parsed;
+};
+
+const isStringArray = (value: unknown): value is string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === "string");
+
+const isTraceStepRecord = (
+  value: unknown,
+): value is DatasetCaseRecord extends infer T
+  ? T extends { trajectory: infer U }
+    ? U extends Array<infer Step>
+      ? Step
+      : never
+    : never
+  : never =>
+  isObject(value) &&
+  typeof value.layer === "string" &&
+  typeof value.latency_ms === "number" &&
+  isObject(value.inputs) &&
+  isObject(value.outputs);
+
+const parseDatasetCaseInput = (
+  payload: unknown,
+  datasetType: DatasetType,
+): CreateDatasetCaseInput | UpdateDatasetCaseInput | null => {
+  if (!isObject(payload) || typeof payload.id !== "string") {
+    return null;
+  }
+
+  if (
+    datasetType === "ideal_output" &&
+    typeof payload.input === "string" &&
+    typeof payload.reference_output === "string" &&
+    isObject(payload.context)
+  ) {
+    return {
+      id: payload.id,
+      input: payload.input,
+      reference_output: payload.reference_output,
+      context: payload.context,
+    };
+  }
+
+  if (
+    datasetType === "workflow" &&
+    typeof payload.input === "string" &&
+    isObject(payload.workflow_output) &&
+    isStringArray(payload.expected_steps)
+  ) {
+    return {
+      id: payload.id,
+      input: payload.input,
+      workflow_output: payload.workflow_output,
+      expected_steps: payload.expected_steps,
+      context: isObject(payload.context) ? payload.context : undefined,
+    };
+  }
+
+  if (
+    datasetType === "trace_monitor" &&
+    typeof payload.trace_id === "string" &&
+    typeof payload.final_output === "string" &&
+    Array.isArray(payload.trajectory) &&
+    payload.trajectory.every(isTraceStepRecord)
+  ) {
+    return {
+      id: payload.id,
+      trace_id: payload.trace_id,
+      final_output: payload.final_output,
+      trajectory: payload.trajectory,
+      context: isObject(payload.context) ? payload.context : undefined,
+    };
+  }
+
+  return null;
+};
+
+const parseReplaceDatasetCasesInput = (
+  payload: unknown,
+  datasetType: DatasetType,
+): ReplaceDatasetCasesInput | null => {
+  if (!isObject(payload) || !Array.isArray(payload.cases)) {
+    return null;
+  }
+
+  const cases = payload.cases
+    .map((item) => parseDatasetCaseInput(item, datasetType))
+    .filter((item): item is DatasetCaseRecord => item !== null);
+
+  if (cases.length !== payload.cases.length) {
+    return null;
+  }
+
+  return { cases };
+};
+
+const parseSynthesizeDatasetInput = (payload: unknown): SynthesizeDatasetInput | null => {
+  if (
+    !isObject(payload) ||
+    typeof payload.dataset_id !== "string" ||
+    (payload.source !== "dataset" && payload.source !== "online") ||
+    typeof payload.direction !== "string" ||
+    !new Set<DatasetSynthesisDirection>([
+      "generalize",
+      "augment_failures",
+      "augment_guardrails",
+      "align_online_distribution",
+    ]).has(payload.direction as DatasetSynthesisDirection) ||
+    typeof payload.scenario_description !== "string" ||
+    typeof payload.use_case_description !== "string" ||
+    typeof payload.seed_source_ref !== "string" ||
+    !Array.isArray(payload.columns) ||
+    !payload.columns.every(isSynthesisColumn) ||
+    typeof payload.sample_count !== "number" ||
+    !Number.isInteger(payload.sample_count) ||
+    payload.sample_count < 10
+  ) {
+    return null;
+  }
+
+  return {
+    dataset_id: payload.dataset_id,
+    source: payload.source as DatasetSynthesisSource,
+    direction: payload.direction as DatasetSynthesisDirection,
+    scenario_description: payload.scenario_description,
+    use_case_description: payload.use_case_description,
+    seed_source_ref: payload.seed_source_ref,
+    columns: payload.columns,
+    sample_count: payload.sample_count,
+  };
+};
+
+const parseDatasetCaseRoute = (pathname: string) => {
+  const match = pathname.match(/^\/api\/datasets\/([^/]+)\/cases\/([^/]+)$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    datasetId: decodeURIComponent(match[1]!),
+    caseId: decodeURIComponent(match[2]!),
+  };
+};
+
+const parsePromptPreviewRoute = (pathname: string) => {
+  const match = pathname.match(/^\/api\/prompts\/([^/]+)\/preview$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    promptId: decodeURIComponent(match[1]!),
+  };
+};
+
+const parseDatasetCasesRoute = (pathname: string) => {
+  const match = pathname.match(/^\/api\/datasets\/([^/]+)\/cases$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    datasetId: decodeURIComponent(match[1]!),
+  };
+};
+
+const parseDatasetSynthesisRoute = (pathname: string) => {
+  const match = pathname.match(/^\/api\/datasets\/([^/]+)\/synthesis$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    datasetId: decodeURIComponent(match[1]!),
   };
 };
 
@@ -259,8 +528,288 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
     return true;
   }
 
+  if (req.method === "GET" && pathname === "/api/prompts") {
+    sendJson(res, 200, { items: (await service.listPrompts()).map(toPromptRecord) });
+    return true;
+  }
+
+  const promptPreviewRoute = parsePromptPreviewRoute(pathname);
+  if (req.method === "POST" && promptPreviewRoute) {
+    const prompt = await store.getPrompt(promptPreviewRoute.promptId);
+    if (!prompt) {
+      sendError(res, 404, "Prompt not found");
+      return true;
+    }
+
+    const payload = parsePromptPreviewInput(await readJsonBody<unknown>(req));
+    if (!payload) {
+      sendError(res, 400, "Invalid prompt preview payload");
+      return true;
+    }
+
+    sendJson(res, 200, {
+      item: buildPromptPreviewResult(toPromptRecord(prompt), payload),
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname.startsWith("/api/prompts/")) {
+    const prompt = await store.getPrompt(pathname.split("/").pop() ?? "");
+    if (!prompt) {
+      sendError(res, 404, "Prompt not found");
+      return true;
+    }
+
+    sendJson(res, 200, { item: toPromptRecord(prompt) });
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/prompts") {
+    const payload = parsePromptInput(await readJsonBody<unknown>(req));
+    if (!payload) {
+      sendError(res, 400, "Invalid prompt payload");
+      return true;
+    }
+
+    try {
+      const prompt = await service.createPrompt({
+        name: payload.name,
+        description: payload.description,
+        systemPrompt: payload.system_prompt,
+        userTemplate: payload.user_template,
+      });
+
+      sendJson(res, 201, { item: toPromptRecord(prompt) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid prompt payload");
+    }
+    return true;
+  }
+
+  if (req.method === "GET" && pathname === "/api/agents") {
+    sendJson(res, 200, { items: (await service.listAgents()).map(toAgentRecord) });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname.startsWith("/api/agents/")) {
+    const agent = await store.getAgent(pathname.split("/").pop() ?? "");
+    if (!agent) {
+      sendError(res, 404, "Agent not found");
+      return true;
+    }
+
+    sendJson(res, 200, { item: toAgentRecord(agent) });
+    return true;
+  }
+
+  if (req.method === "POST" && pathname === "/api/agents") {
+    const payload = parseAgentInput(await readJsonBody<unknown>(req));
+    if (!payload) {
+      sendError(res, 400, "Invalid agent payload");
+      return true;
+    }
+
+    try {
+      const agent = await service.createAgent({
+        name: payload.name,
+        description: payload.description,
+        queryProcessor: payload.query_processor,
+        retriever: payload.retriever,
+        reranker: payload.reranker,
+        answerer: payload.answerer,
+      });
+
+      sendJson(res, 201, { item: toAgentRecord(agent) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid agent payload");
+    }
+    return true;
+  }
+
   if (req.method === "GET" && pathname === "/api/datasets") {
     sendJson(res, 200, { items: (await service.listDatasets()).map(toDatasetRecord) });
+    return true;
+  }
+
+  const datasetCasesRoute = parseDatasetCasesRoute(pathname);
+  if (req.method === "GET" && datasetCasesRoute) {
+    const dataset = await store.getDataset(datasetCasesRoute.datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    sendJson(res, 200, { items: toDatasetRecord(dataset).cases });
+    return true;
+  }
+
+  if (req.method === "PUT" && datasetCasesRoute) {
+    const dataset = await store.getDataset(datasetCasesRoute.datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    const payload = parseReplaceDatasetCasesInput(await readJsonBody<unknown>(req), dataset.datasetType);
+    if (!payload) {
+      sendError(res, 400, "Invalid dataset cases payload");
+      return true;
+    }
+
+    try {
+      const updated = await service.replaceDatasetCases(datasetCasesRoute.datasetId, {
+        cases: payload.cases.map((item) => toEditableDatasetCase(item, dataset.datasetType)),
+      });
+
+      sendJson(res, 200, {
+        items: updated.cases.map((item) => toDatasetCaseRecord(item, updated.datasetType)),
+      });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset cases payload");
+    }
+    return true;
+  }
+
+  if (req.method === "POST" && datasetCasesRoute) {
+    const dataset = await store.getDataset(datasetCasesRoute.datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    const payload = parseDatasetCaseInput(await readJsonBody<unknown>(req), dataset.datasetType);
+    if (!payload) {
+      sendError(res, 400, "Invalid dataset case payload");
+      return true;
+    }
+
+    try {
+      const updated = await service.createDatasetCase(
+        datasetCasesRoute.datasetId,
+        toEditableDatasetCase(payload, dataset.datasetType),
+      );
+      const created = updated.cases.find((item) => getDatasetCaseKey(item) === payload.id);
+      if (!created) {
+        sendError(res, 500, "Dataset case creation did not persist");
+        return true;
+      }
+
+      sendJson(res, 201, { item: toDatasetCaseRecord(created, updated.datasetType) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset case payload");
+    }
+    return true;
+  }
+
+  const datasetCaseRoute = parseDatasetCaseRoute(pathname);
+  if (req.method === "GET" && datasetCaseRoute) {
+    const dataset = await store.getDataset(datasetCaseRoute.datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    const datasetCase = toDatasetRecord(dataset).cases.find((item) => item.id === datasetCaseRoute.caseId);
+    if (!datasetCase) {
+      sendError(res, 404, "Dataset case not found");
+      return true;
+    }
+
+    sendJson(res, 200, { item: datasetCase });
+    return true;
+  }
+
+  if (req.method === "PUT" && datasetCaseRoute) {
+    const dataset = await store.getDataset(datasetCaseRoute.datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    const payload = parseDatasetCaseInput(await readJsonBody<unknown>(req), dataset.datasetType);
+    if (!payload || payload.id !== datasetCaseRoute.caseId) {
+      sendError(res, 400, "Invalid dataset case payload");
+      return true;
+    }
+
+    const currentCase = dataset.cases.find((item) => getDatasetCaseKey(item) === datasetCaseRoute.caseId);
+    if (!currentCase) {
+      sendError(res, 404, "Dataset case not found");
+      return true;
+    }
+
+    try {
+      const updated = await service.updateDatasetCase(
+        datasetCaseRoute.datasetId,
+        toEditableDatasetCase(payload, dataset.datasetType),
+      );
+      const updatedCase = updated.cases.find((item) => getDatasetCaseKey(item) === datasetCaseRoute.caseId);
+      if (!updatedCase) {
+        sendError(res, 404, "Dataset case not found");
+        return true;
+      }
+
+      sendJson(res, 200, { item: toDatasetCaseRecord(updatedCase, updated.datasetType) });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset case payload");
+    }
+    return true;
+  }
+
+  if (req.method === "DELETE" && datasetCaseRoute) {
+    const datasetCase = await store.getDatasetCase(datasetCaseRoute.datasetId, datasetCaseRoute.caseId);
+    if (!datasetCase) {
+      sendError(res, 404, "Dataset case not found");
+      return true;
+    }
+
+    try {
+      await service.deleteDatasetCase(datasetCaseRoute.datasetId, datasetCaseRoute.caseId);
+      withCors(res);
+      res.writeHead(204);
+      res.end();
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset case payload");
+    }
+    return true;
+  }
+
+  const datasetSynthesisRoute = parseDatasetSynthesisRoute(pathname);
+  if (req.method === "POST" && datasetSynthesisRoute) {
+    const payload = parseSynthesizeDatasetInput(await readJsonBody<unknown>(req));
+    if (!payload || payload.dataset_id !== datasetSynthesisRoute.datasetId) {
+      sendError(res, 400, "Invalid synthesis payload");
+      return true;
+    }
+
+    const result = await store.synthesizeDatasetCases(datasetSynthesisRoute.datasetId, payload);
+    if (!result) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    sendJson(res, 200, {
+      item: {
+        dataset_id: result.dataset_id,
+        source: result.source,
+        direction: result.direction,
+        items: result.items,
+        status: result.status,
+        created_at: result.created_at,
+      } satisfies DatasetSynthesisResult,
+    });
+    return true;
+  }
+
+  if (req.method === "GET" && pathname.startsWith("/api/datasets/")) {
+    const datasetId = pathname.split("/").pop() ?? "";
+    const dataset = await store.getDataset(datasetId);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    sendJson(res, 200, { item: toDatasetRecord(dataset) });
     return true;
   }
 
@@ -278,6 +827,7 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
             name: payload.name,
             description: payload.description,
             datasetType: payload.dataset_type,
+            sampleCount: payload.sample_count,
             schema: payload.schema.map((field) => ({
               name: field.name,
               dataType: field.data_type,
@@ -287,6 +837,41 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
           }),
         ),
       });
+    } catch (error) {
+      sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset payload");
+    }
+    return true;
+  }
+
+  if (req.method === "PUT" && pathname.startsWith("/api/datasets/")) {
+    const datasetId = pathname.split("/").pop() ?? "";
+    const payload = parseUpdateDatasetInput(await readJsonBody<unknown>(req));
+    if (!payload) {
+      sendError(res, 400, "Invalid dataset payload");
+      return true;
+    }
+
+    try {
+      const dataset = await store.updateDataset(datasetId, {
+        name: payload.name,
+        description: payload.description,
+        datasetType: payload.dataset_type,
+        sampleCount: payload.sample_count,
+        schema: payload.schema.map((field) => ({
+          name: field.name,
+          dataType: field.data_type,
+          required: field.required,
+          description: field.description,
+        })),
+        timestamp: new Date().toISOString(),
+      });
+
+      if (!dataset) {
+        sendError(res, 404, "Dataset not found");
+        return true;
+      }
+
+      sendJson(res, 200, { item: toDatasetRecord(dataset) });
     } catch (error) {
       sendError(res, 400, error instanceof Error ? error.message : "Invalid dataset payload");
     }
@@ -453,3 +1038,42 @@ const server = http.createServer(async (req, res) => {
 server.listen(config.port, config.host, () => {
   console.log(`${config.appName} API listening on ${config.appBaseUrl}`);
 });
+
+const getDatasetCaseKey = (item: object): string | undefined => {
+  const caseId = Reflect.get(item, "caseId");
+  if (typeof caseId === "string") {
+    return caseId;
+  }
+
+  const id = Reflect.get(item, "id");
+  return typeof id === "string" ? id : undefined;
+};
+
+const buildPromptPreviewResult = (
+  prompt: PromptRecord,
+  input: PromptPreviewInput,
+): PromptPreviewResult => {
+  const renderedSystem = applyPromptVariables(prompt.system_prompt, input.input, input.variables);
+  const renderedUser = applyPromptVariables(prompt.user_template, input.input, input.variables);
+
+  return {
+    prompt_id: prompt.id,
+    input: input.input,
+    rendered_system_prompt: renderedSystem,
+    rendered_user_prompt: renderedUser,
+    output_preview: `Preview only: ${input.input}`,
+    created_at: new Date().toISOString(),
+  };
+};
+
+const applyPromptVariables = (
+  template: string,
+  input: string,
+  variables?: Record<string, string>,
+): string => {
+  const entries = { input, ...(variables ?? {}) };
+  return Object.entries(entries).reduce(
+    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
+    template,
+  );
+};

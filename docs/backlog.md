@@ -72,7 +72,7 @@ Date: 2026-03-16
 
 ## 5. Epics
 
-当前 backlog 建议按 7 个 epic 管理。
+当前 backlog 建议按 8 个 epic 管理。
 
 ### Epic A. 文档与信息架构
 
@@ -142,12 +142,23 @@ Issue 候选：
   - 不做重型 IDE
   - 可录入最小字段并保存
 
+#### B4. 实现 Prompt template 与 Preview/debug
+
+- 类型：frontend
+- 优先级：P0
+- 验收标准：
+  - Prompt 页面支持编辑 prompt template
+  - Prompt 页面支持单次 preview/debug 测试
+  - 不强制实现 `common configuration`
+  - preview/debug 只服务单次调试，不替代实验
+
 ### Epic C. Dataset 模块
 
 目标：
 
 - 支持三类评测集
 - 支持 schema 配置和样本承载
+- 先完成 `Evaluation set` 主线
 
 Issue 候选：
 
@@ -182,6 +193,79 @@ Issue 候选：
 - 验收标准：
   - 支持本地导入样本
   - 导入数据能映射到 schema
+
+#### B5. 实现 Dataset 页双 tab 结构
+
+- 类型：frontend
+- 优先级：P2
+- 验收标准：
+  - Dataset 页包含 `Evaluation set / 智能合成` 两个 tab
+  - `Evaluation set` 与 `智能合成` 不混排
+
+#### B6. 实现智能合成两步向导
+
+- 类型：frontend
+- 优先级：P3
+- 验收标准：
+  - 第一步：`合成场景及来源`
+  - 第二步：`合成样本配置`
+  - 页面结构贴近 Coze Loop 的两步流程
+
+#### B7. 定义智能合成方向模型
+
+- 类型：backend
+- 优先级：P3
+- 验收标准：
+  - 支持 `generalize`
+  - 支持 `augment_failures`
+  - 支持 `augment_guardrails`
+  - 支持 `align_online_distribution`
+  - 合成输入必须包含场景描述、来源、方向、样本数
+
+#### B8. 实现智能合成草稿结果结构
+
+- 类型：backend
+- 优先级：P3
+- 验收标准：
+  - 合成结果先进入草稿区
+  - 不直接写入正式 dataset
+  - 支持人工确认后并入 `Evaluation set`
+
+#### B9. 实现智能合成双来源接口
+
+- 类型：integration
+- 优先级：P3
+- 验收标准：
+  - 支持 `dataset` 来源
+  - 支持 `online` 来源
+  - 返回结构能被向导页面直接消费
+
+### Epic H. 智能合成侧线
+
+目标：
+
+- 将 `智能合成` 从主线 MVP 中剥离
+- 作为独立 agent/独立验收流推进
+- 保持与正式 Dataset 解耦
+
+Issue 候选：
+
+#### H1. 建立智能合成独立需求与接口清单
+
+- 类型：documentation
+- 优先级：P2
+- 验收标准：
+  - 明确 synthesis 输入结构
+  - 明确 draft 输出结构
+  - 明确并入 Evaluation set 的后续流程
+
+#### H2. 实现 synthesis draft 流转
+
+- 类型：integration
+- 优先级：P3
+- 验收标准：
+  - synthesis 结果不直接进入正式 dataset
+  - 可单独预览、确认、放弃
 
 ### Epic D. Evaluator 模块
 
@@ -237,6 +321,7 @@ Issue 候选：
 
 - 支持实验运行与 AB 实验
 - 支持端到端与分层结果展示
+- 统一承载评测、观测、trace 与统计结果
 
 Issue 候选：
 
@@ -255,6 +340,7 @@ Issue 候选：
 - 验收标准：
   - 可查看 case 列表
   - 可查看 case 输出与指标结果
+  - 可在实验内查看 trace 下钻与统计摘要
 
 #### D3. 实现 AB 实验页面
 

@@ -9,6 +9,7 @@ import type {
 import type {
   ApiMeta,
   BootstrapResponse,
+  DatasetCaseRecord,
   DatasetRecord,
   EvaluatorRecord,
   LayerName,
@@ -24,6 +25,7 @@ export interface DemoDataset {
   description: string;
   datasetType: DatasetRecord["dataset_type"];
   columns: DatasetRecord["schema"];
+  cases: DatasetCaseRecord[];
   itemCount: number;
   version: string;
 }
@@ -113,18 +115,8 @@ const traceRecordToTraceRun = (
 const buildExperiment = (
   experiment: BootstrapResponse["data"]["experiments"][number],
   traceMap: Map<string, TraceRunRecord>,
-): ExperimentRun => ({
-  experimentId: experiment.id,
-  target: {
-    id: experiment.pipeline_version.id,
-    name: experiment.pipeline_version.name,
-    version: experiment.pipeline_version.version,
-    queryProcessor: experiment.pipeline_version.query_processor,
-    retriever: experiment.pipeline_version.retriever,
-    reranker: experiment.pipeline_version.reranker,
-    answerer: experiment.pipeline_version.answerer,
-  },
-  caseRuns: experiment.case_results.map((result) => {
+): ExperimentRun => {
+  const caseRuns = experiment.case_results.map((result) => {
     const layerMetrics = result.scores.map(mapMetric);
     const traceRecord = traceMap.get(result.trace_id);
     const trace = traceRecord
@@ -150,9 +142,19 @@ const buildExperiment = (
           layerMetrics,
         );
 
+    const status = layerMetrics.some((metric) => metric.status === "runtime_error")
+      ? "runtime_error"
+      : layerMetrics.some((metric) => metric.status === "invalid_judgment")
+        ? "invalid_judgment"
+        : "success";
+
     return {
       caseId: result.case_id,
       targetId: experiment.pipeline_version.id,
+      output: result.output.answer_output,
+      scores: layerMetrics,
+      traceId: result.trace_id,
+      status,
       trace,
       layerRuns: [
         {
@@ -178,8 +180,37 @@ const buildExperiment = (
       ],
       layerMetrics,
     };
-  }),
-});
+  });
+
+  return {
+    experimentId: experiment.id,
+    datasetId: experiment.dataset_id,
+    evaluatorIds: experiment.evaluator_ids,
+    pipelineVersionId: experiment.pipeline_version.id,
+    target: {
+      id: experiment.pipeline_version.id,
+      name: experiment.pipeline_version.name,
+      version: experiment.pipeline_version.version,
+      queryProcessor: experiment.pipeline_version.query_processor,
+      retriever: experiment.pipeline_version.retriever,
+      reranker: experiment.pipeline_version.reranker,
+      answerer: experiment.pipeline_version.answerer,
+    },
+    status: experiment.status,
+    startedAt: experiment.created_at,
+    finishedAt: experiment.updated_at,
+    summary: {
+      totalCases: experiment.summary.case_count,
+      completedCases: caseRuns.filter((caseRun) => caseRun.status === "success").length,
+      failedCases: caseRuns.filter((caseRun) => caseRun.status === "runtime_error").length,
+      invalidJudgmentCount: caseRuns.filter((caseRun) => caseRun.status === "invalid_judgment").length,
+      averageMetrics: Object.fromEntries(
+        experiment.summary.metrics.map((metric) => [metric.metric_name, metric.average_score]),
+      ),
+    },
+    caseRuns,
+  };
+};
 
 const contextField = <T>(context: Record<string, unknown>, key: string, fallback: T) => {
   const value = context[key];
@@ -320,6 +351,7 @@ const mapDatasets = (datasets: DatasetRecord[]): DemoDataset[] =>
     description: dataset.description,
     datasetType: dataset.dataset_type,
     columns: dataset.schema,
+    cases: dataset.cases,
     itemCount: dataset.cases.length,
     version: dataset.version,
   }));
@@ -345,6 +377,23 @@ const mapMetricDefinitions = (evaluators: EvaluatorRecord[]): MetricDefinition[]
     codeStrategy: evaluator.code_strategy,
     description: evaluator.description,
   }));
+
+const mergeSeededDatasets = (bootstrap: BootstrapResponse): BootstrapResponse => {
+  const seededDatasets = defaultBootstrap.data.datasets;
+  const remoteDatasetIds = new Set(bootstrap.data.datasets.map((dataset) => dataset.id));
+  const mergedDatasets = [
+    ...bootstrap.data.datasets,
+    ...seededDatasets.filter((dataset) => !remoteDatasetIds.has(dataset.id)),
+  ];
+
+  return {
+    ...bootstrap,
+    data: {
+      ...bootstrap.data,
+      datasets: mergedDatasets,
+    },
+  };
+};
 
 export const buildDemoViewModel = (bootstrap: BootstrapResponse): DemoViewModel => {
   const traceMap = new Map(bootstrap.data.traces.map((trace) => [trace.id, trace]));
@@ -384,4 +433,4 @@ export const replaceDemoViewModel = (nextViewModel: DemoViewModel) => {
   Object.assign(demoViewModel, nextViewModel);
 };
 
-export const loadRemoteDemoViewModel = async () => buildDemoViewModel(await fetchBootstrap());
+export const loadRemoteDemoViewModel = async () => buildDemoViewModel(mergeSeededDatasets(await fetchBootstrap()));

@@ -8,6 +8,20 @@ import {
   PromptVersion,
   TraceRun,
 } from "../domain/types.js";
+import type {
+  AgentRecord,
+  CreateAgentInput,
+  CreatePromptInput,
+  CreateDatasetCaseInput,
+  DatasetCaseRecord,
+  DatasetSynthesisResult,
+  PromptPreviewInput,
+  PromptPreviewResult,
+  PromptRecord,
+  ReplaceDatasetCasesInput,
+  SynthesizeDatasetInput,
+  UpdateDatasetCaseInput,
+} from "../shared/contracts.js";
 
 export interface DatasetListItem {
   id: string;
@@ -49,6 +63,48 @@ export interface EvalLoopApi extends ApiContract {
   bootstrap(): Promise<BootstrapPayload>;
   listPrompts(): Promise<PromptVersion[]>;
   listAgents(): Promise<AgentVersion[]>;
+  getPrompt(promptId: string): Promise<PromptRecord | undefined>;
+  createPrompt(input: CreatePromptInput): Promise<PromptRecord>;
+  previewPrompt(promptId: string, input: PromptPreviewInput): Promise<PromptPreviewResult | undefined>;
+  getAgent(agentId: string): Promise<AgentRecord | undefined>;
+  createAgent(input: CreateAgentInput): Promise<AgentRecord>;
+  getDataset(datasetId: string): Promise<Dataset | undefined>;
+  createDataset(input: {
+    name: string;
+    description: string;
+    datasetType: Dataset["datasetType"];
+    sampleCount: number;
+    schema: Dataset["schema"];
+  }): Promise<Dataset>;
+  updateDataset(
+    datasetId: string,
+    input: {
+      name: string;
+      description: string;
+      datasetType: Dataset["datasetType"];
+      sampleCount: number;
+      schema: Dataset["schema"];
+    },
+  ): Promise<Dataset | undefined>;
+  listDatasetCases(datasetId: string): Promise<DatasetCaseRecord[] | undefined>;
+  getDatasetCase(datasetId: string, caseId: string): Promise<DatasetCaseRecord | undefined>;
+  replaceDatasetCases(
+    datasetId: string,
+    input: ReplaceDatasetCasesInput,
+  ): Promise<DatasetCaseRecord[] | undefined>;
+  createDatasetCase(
+    datasetId: string,
+    input: CreateDatasetCaseInput,
+  ): Promise<DatasetCaseRecord | undefined>;
+  updateDatasetCase(
+    datasetId: string,
+    nextCase: UpdateDatasetCaseInput,
+  ): Promise<DatasetCaseRecord | undefined>;
+  deleteDatasetCase(datasetId: string, caseId: string): Promise<boolean>;
+  synthesizeDatasetCases(
+    datasetId: string,
+    input: SynthesizeDatasetInput,
+  ): Promise<DatasetSynthesisResult | undefined>;
   getExperiment(experimentId: string): Promise<ExperimentRun | undefined>;
 }
 

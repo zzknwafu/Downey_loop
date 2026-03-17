@@ -1,8 +1,16 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import {
+  createDatasetCaseDefinition,
+  deleteDatasetCaseDefinition,
+  replaceDatasetCasesDefinition,
+  updateDatasetCaseDefinition,
+  updateDatasetDefinition,
+} from "../domain/datasets.js";
+import {
   AgentVersion,
   Dataset,
+  EditableDatasetCase,
   Evaluator,
   ExperimentComparison,
   ExperimentRun,
@@ -10,6 +18,7 @@ import {
   PromptVersion,
   TraceRun,
 } from "../domain/types.js";
+import type { DatasetCaseRecord, DatasetSynthesisDirection, DatasetSynthesisResult } from "../shared/contracts.js";
 
 const emptySnapshot = (): LocalStoreSnapshot => ({
   datasets: [],
@@ -48,6 +57,190 @@ export class FileBackedLocalStore {
     const snapshot = await this.load();
     snapshot.datasets = upsertById(snapshot.datasets, dataset);
     await this.save(snapshot);
+  }
+
+  async updateDataset(
+    datasetId: string,
+    input: {
+      name: string;
+      description: string;
+      datasetType: Dataset["datasetType"];
+      schema: Dataset["schema"];
+      sampleCount: number;
+      timestamp: string;
+    },
+  ): Promise<Dataset | undefined> {
+    const snapshot = await this.load();
+    const existingIndex = snapshot.datasets.findIndex((dataset) => dataset.id === datasetId);
+    if (existingIndex === -1) {
+      return undefined;
+    }
+
+    const existing = snapshot.datasets[existingIndex]!;
+    const updated = updateDatasetDefinition({
+      current: existing,
+      name: input.name,
+      description: input.description,
+      datasetType: input.datasetType,
+      schema: input.schema,
+      sampleCount: input.sampleCount,
+      timestamp: input.timestamp,
+    });
+
+    snapshot.datasets[existingIndex] = updated;
+    await this.save(snapshot);
+    return updated;
+  }
+
+  async listDatasetCases(datasetId: string): Promise<Dataset["cases"] | undefined> {
+    const dataset = await this.getDataset(datasetId);
+    return dataset?.cases;
+  }
+
+  async getDatasetCase(
+    datasetId: string,
+    caseId: string,
+  ): Promise<Dataset["cases"][number] | undefined> {
+    const dataset = await this.getDataset(datasetId);
+    return dataset?.cases.find((item) => datasetCaseKey(item) === caseId);
+  }
+
+  async updateDatasetCase(
+    datasetId: string,
+    item: EditableDatasetCase,
+    timestamp: string,
+  ): Promise<Dataset<EditableDatasetCase> | undefined> {
+    const snapshot = await this.load();
+    const datasetIndex = snapshot.datasets.findIndex((dataset) => dataset.id === datasetId);
+    if (datasetIndex === -1) {
+      return undefined;
+    }
+
+    const current = snapshot.datasets[datasetIndex] as unknown as Dataset<EditableDatasetCase>;
+    const updatedDataset = updateDatasetCaseDefinition({
+      current,
+      item,
+      timestamp,
+    });
+
+    snapshot.datasets[datasetIndex] = updatedDataset as unknown as Dataset;
+    await this.save(snapshot);
+    return updatedDataset;
+  }
+
+  async replaceDatasetCases(
+    datasetId: string,
+    cases: EditableDatasetCase[],
+    timestamp: string,
+  ): Promise<Dataset<EditableDatasetCase> | undefined> {
+    const snapshot = await this.load();
+    const datasetIndex = snapshot.datasets.findIndex((dataset) => dataset.id === datasetId);
+    if (datasetIndex === -1) {
+      return undefined;
+    }
+
+    const current = snapshot.datasets[datasetIndex] as unknown as Dataset<EditableDatasetCase>;
+    const updatedDataset = replaceDatasetCasesDefinition({
+      current,
+      cases,
+      timestamp,
+    });
+
+    snapshot.datasets[datasetIndex] = updatedDataset as unknown as Dataset;
+    await this.save(snapshot);
+    return updatedDataset;
+  }
+
+  async createDatasetCase(
+    datasetId: string,
+    item: EditableDatasetCase,
+    timestamp: string,
+  ): Promise<Dataset<EditableDatasetCase> | undefined> {
+    const snapshot = await this.load();
+    const datasetIndex = snapshot.datasets.findIndex((dataset) => dataset.id === datasetId);
+    if (datasetIndex === -1) {
+      return undefined;
+    }
+
+    const current = snapshot.datasets[datasetIndex] as unknown as Dataset<EditableDatasetCase>;
+    const updatedDataset = createDatasetCaseDefinition({
+      current,
+      item,
+      timestamp,
+    });
+
+    snapshot.datasets[datasetIndex] = updatedDataset as unknown as Dataset;
+    await this.save(snapshot);
+    return updatedDataset;
+  }
+
+  async deleteDatasetCase(
+    datasetId: string,
+    caseId: string,
+    timestamp: string,
+  ): Promise<Dataset<EditableDatasetCase> | undefined> {
+    const snapshot = await this.load();
+    const datasetIndex = snapshot.datasets.findIndex((dataset) => dataset.id === datasetId);
+    if (datasetIndex === -1) {
+      return undefined;
+    }
+
+    const current = snapshot.datasets[datasetIndex] as unknown as Dataset<EditableDatasetCase>;
+    const updatedDataset = deleteDatasetCaseDefinition({
+      current,
+      caseId,
+      timestamp,
+    });
+
+    snapshot.datasets[datasetIndex] = updatedDataset as unknown as Dataset;
+    await this.save(snapshot);
+    return updatedDataset;
+  }
+
+  async synthesizeDatasetCases(
+    datasetId: string,
+    input: {
+      source: "dataset" | "online";
+      direction: DatasetSynthesisDirection;
+      scenario_description: string;
+      use_case_description: string;
+      seed_source_ref: string;
+      columns: Array<{
+        name: string;
+        description: string;
+        generation_requirement: string;
+      }>;
+      sample_count: number;
+    },
+  ): Promise<DatasetSynthesisResult | undefined> {
+    const dataset = await this.getDataset(datasetId);
+    if (!dataset) {
+      return undefined;
+    }
+
+    const sampleCount = Math.max(10, input.sample_count);
+    const items = Array.from({ length: sampleCount }, (_, index) =>
+      buildSynthesisDraftCase({
+        datasetId,
+        datasetType: dataset.datasetType,
+        source: input.source,
+        direction: input.direction,
+        scenarioDescription: input.scenario_description,
+        useCaseDescription: input.use_case_description,
+        seedSourceRef: input.seed_source_ref,
+        columns: input.columns,
+        index,
+      }),
+    );
+
+    return {
+      dataset_id: datasetId,
+      source: input.source,
+      direction: input.direction,
+      items,
+      status: "draft",
+      created_at: new Date().toISOString(),
+    };
   }
 
   async upsertEvaluator(evaluator: Evaluator): Promise<void> {
@@ -206,4 +399,81 @@ const dedupeTraces = (traces: TraceRun[]): TraceRun[] => {
     seen.set(trace.traceId, trace);
   }
   return [...seen.values()];
+};
+
+const datasetCaseKey = (item: Dataset["cases"][number]): string | undefined => {
+  const caseId = Reflect.get(item as object, "caseId");
+  if (typeof caseId === "string") {
+    return caseId;
+  }
+
+  const id = Reflect.get(item as object, "id");
+  return typeof id === "string" ? id : undefined;
+};
+
+const buildSynthesisDraftCase = (input: {
+  datasetId: string;
+  datasetType: Dataset["datasetType"];
+  source: "dataset" | "online";
+  direction: DatasetSynthesisDirection;
+  scenarioDescription: string;
+  useCaseDescription: string;
+  seedSourceRef: string;
+  columns: Array<{
+    name: string;
+    description: string;
+    generation_requirement: string;
+  }>;
+  index: number;
+}): DatasetCaseRecord => {
+  const draftId = `${input.datasetId}_draft_${input.direction}_${input.index + 1}`;
+  const columnHints = input.columns.reduce<Record<string, string>>((result, column) => {
+    result[column.name] = column.generation_requirement;
+    return result;
+  }, {});
+  const baseContext = {
+    source: input.source,
+    direction: input.direction,
+    scenario_description: input.scenarioDescription,
+    use_case_description: input.useCaseDescription,
+    seed_source_ref: input.seedSourceRef,
+    column_hints: columnHints,
+    draft: true,
+  };
+
+  switch (input.datasetType) {
+    case "ideal_output":
+      return {
+        id: draftId,
+        input: `Draft query ${input.index + 1}: ${input.scenarioDescription}`,
+        reference_output: `Draft answer for ${input.useCaseDescription}`,
+        context: baseContext,
+      };
+    case "workflow":
+      return {
+        id: draftId,
+        input: `Draft workflow input ${input.index + 1}`,
+        workflow_output: {
+          summary: input.useCaseDescription,
+          direction: input.direction,
+        },
+        expected_steps: ["retrieve", "reason", "respond"],
+        context: baseContext,
+      };
+    case "trace_monitor":
+      return {
+        id: draftId,
+        trace_id: `${draftId}_trace`,
+        final_output: `Draft trace output for ${input.scenarioDescription}`,
+        trajectory: [
+          {
+            layer: "retrieval",
+            latency_ms: 42,
+            inputs: { seed_source_ref: input.seedSourceRef },
+            outputs: { direction: input.direction },
+          },
+        ],
+        context: baseContext,
+      };
+  }
 };
