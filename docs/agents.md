@@ -20,6 +20,14 @@ Date: 2026-03-17
 - [docs/architecture.md](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/architecture.md)
 - [docs/backlog.md](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/backlog.md)
 
+当前还必须统一遵守一条产品边界：
+
+- 只要某个 dataset 出现在正式 Dataset 列表中，就属于正式评测集
+- 正式评测集包括：
+  - 产品内置预置 dataset
+  - 用户通过真实创建链路成功保存的数据集
+- 只有纯前端 local mock dataset 才不能进入真实 Experiment
+
 ## 2. Agent 1 — Core / Domain
 
 ### Role
@@ -90,6 +98,7 @@ Date: 2026-03-17
 ### In Scope
 
 - 左侧导航
+- `Prompts / Agents` 平级 Targets 结构
 - `实验 -> 实验运行 / AB 实验` 二级菜单
 - 评测集页
 - 评估器页
@@ -116,6 +125,10 @@ Date: 2026-03-17
 - 评估器页主视图必须围绕 `Retrieval / Rerank / Answer / Overall`
 - 新建评估器先选择 `LLM Evaluator / Code Evaluator`
 - 页面布局要稳定，避免 hover 抖动和边框跳动
+- Agent 页不得继续默认暴露 AI Search 固定 pipeline 字段
+- `Create Agent` 应采用 `Simple / Advanced` 双模式
+- 不能再把预置 dataset 当成 `seeded/local mock` 排除出 Experiment
+- `可用于实验` 的 dataset 计数应包含正式列表中的预置 dataset 与真实创建成功的数据集
 - 如需新增字段，先回到 Agent 1 确认
 
 ### Success Criteria
@@ -147,6 +160,7 @@ Date: 2026-03-17
 ### In Scope
 
 - mock API / contract
+- AgentVersion 新旧结构兼容映射
 - 本地存储适配层
 - 配置读取层
 - 统一 dev/build/start 方式
@@ -175,6 +189,9 @@ Date: 2026-03-17
 - mock data 和真实接口 shape 必须一致
 - 不能绕开文档自定义命名
 - 不能替代 Agent 1 决定业务逻辑
+- 不能把 AI Search 固定 pipeline 字段继续作为 AgentVersion 的唯一 contract
+- 不能用 `seeded` 或内置来源去否定 dataset 的正式实验资格
+- 预置 dataset 只要出现在正式列表中，就必须能通过真实 Experiment create 校验
 
 ### Success Criteria
 

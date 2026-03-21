@@ -212,12 +212,15 @@ AI 搜索层级包括：
 
 - 使用 React + TypeScript
 - 左侧导航清晰
+- `Prompts / Agents` 平级展示
 - Prompt 页面保留 `Prompt template + Preview and debug`
 - Prompt 页面不强制实现 `common configuration`
 - 评估器页以 AI 搜索流程为主视图
 - 新建评估器通过弹窗先选择 LLM 或 Code
 - 数据集页支持三类评测集
 - 实验板块统一承载评测、观测、trace 与统计
+- Agent 创建改成 `Simple / Advanced` 双模式
+- AI Search 专有字段不能继续作为 Agent 页默认主表单
 
 ### Deliverables
 
@@ -233,6 +236,17 @@ AI 搜索层级包括：
 - 不做与产品主线无关的复杂 UI
 - 优先保证信息架构清晰
 - 只消费共享 contract，不修改 `src/domain/types.ts`、`src/domain/evaluators.ts`、`src/domain/comparison.ts`
+
+对于 Agent 页面：
+
+- `Simple Mode` 只展示：
+  - `name`
+  - `version`
+  - `description`
+  - `scenario`
+  - `entry_type`
+  - `artifact_ref`
+- `Advanced Mode` 只做 composition 声明，不绑定执行语义
 
 ## 6. Synthesis Agent
 

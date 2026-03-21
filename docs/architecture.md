@@ -6,13 +6,13 @@ Date: 2026-03-16
 
 ## 1. System Overview
 
-系统实现的是一套面向 `AI 搜索链路` 的评测闭环。
+系统实现的是一套面向版本化 targets 的评测闭环。
 
 核心执行流为：
 
 `Target -> Dataset -> Experiment -> Runner -> Evaluator -> Trace / Result`
 
-与通用问答评测不同，本系统将 AI 搜索 pipeline 拆分为分层可观测结构，而不是只存最终输出。
+与通用问答评测不同，本系统优先支持 AI 搜索这一典型场景，并将其拆分为分层可观测结构，而不是只存最终输出。
 
 ## 2. Core Architectural Principles
 
@@ -55,19 +55,29 @@ Date: 2026-03-16
 - `family` 包含 `model` 与 `code`
 - `metric_type` 包含 `binary`、`continuous`、`categorical`
 
-### 3.3 SearchPipelineVersion
+### 3.3 AgentVersion
 
-代表被测 AI 搜索版本。
+代表被测的通用智能体或执行系统版本。
 
 最小字段集：
 
 - `id`
 - `name`
 - `version`
-- `query_processor`
-- `retriever`
-- `reranker`
-- `answerer`
+- `description`
+- `scenario`
+- `entry_type`
+- `artifact_ref`
+- `composition?`
+
+说明：
+
+- `scenario` 用于描述业务场景，AI Search 只是其中一种
+- `entry_type` v1 采用最小标准枚举：
+  - `prompt`
+  - `api`
+  - `workflow`
+- `composition?` 是可选高级能力，v1 不要求执行层必须按 composition 运行
 
 ### 3.4 PromptVersion
 
@@ -154,13 +164,13 @@ Date: 2026-03-16
 
 补充关系：
 
-- `ExperimentRun` 关联 `PromptVersion` 或 `SearchPipelineVersion`
+- `ExperimentRun` 关联 `PromptVersion` 或 `AgentVersion`
 - `ExperimentRun` 关联多个 `Evaluator`
 - `ABExperiment` 对比两个 `ExperimentRun`
 
 ## 5. Layered Pipeline Model
 
-本系统的搜索链路分为四层：
+AI Search 仍然是当前项目主支持场景之一，其评测链路分为四层：
 
 1. `Retrieval`
 2. `Rerank`
@@ -169,6 +179,11 @@ Date: 2026-03-16
 
 各层都应可单独评分、单独查看输出、单独下钻问题。
 
+说明：
+
+- 这四层属于当前 evaluator / trace 的主场景设计
+- 不等价于所有 `AgentVersion` 必须固化成四段 pipeline 字段
+
 ## 6. Execution Flow
 
 执行流程如下：
@@ -176,11 +191,16 @@ Date: 2026-03-16
 1. 用户发起实验
 2. 系统创建 `ExperimentRun`
 3. Runner 将 dataset 拆成多个 case
-4. 每个 case 执行 pipeline
+4. 每个 case 执行 target
 5. Evaluators 对输出进行打分或判定
 6. 记录 `CaseResult`
 7. 写入 `TraceRun`
 8. 汇总生成 experiment summary
+
+对于 v1：
+
+- `root-level eval` 是默认能力
+- `module-level eval` 明确为二期增强
 
 ## 7. Async Job Model
 
@@ -238,6 +258,8 @@ Trace 用于承载 AI 搜索链路的执行证据。
 下钻路径定义为：
 
 `overall -> layer -> case -> trace`
+
+当 target 提供模块信息时，模块信息可作为增强信息挂在 step/trace 上；v1 不要求必须存在 module trace。
 
 ## 10. Recommended Repository Structure
 

@@ -3,6 +3,7 @@ import { buildSampleExperiments } from "../domain/sample-data.js";
 import { sampleDatasets, sampleEvaluators } from "../domain/sample-data.js";
 import type {
   AbExperimentRecord,
+  AgentRecord,
   ApiMeta,
   AppDataSnapshot,
   AttributionRecord,
@@ -93,6 +94,34 @@ const mapPipeline = (pipeline: {
   id: pipeline.id,
   name: pipeline.name,
   version: pipeline.version,
+  query_processor: pipeline.queryProcessor,
+  retriever: pipeline.retriever,
+  reranker: pipeline.reranker,
+  answerer: pipeline.answerer,
+});
+
+const mapAgentTarget = (pipeline: {
+  id: string;
+  name: string;
+  version: string;
+  queryProcessor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+}): AgentRecord => ({
+  id: pipeline.id,
+  name: pipeline.name,
+  version: pipeline.version,
+  description: `${pipeline.name} target`,
+  scenario: "ai_search",
+  entry_type: "workflow",
+  artifact_ref: pipeline.id,
+  composition: [
+    { kind: "query_processor", ref: pipeline.queryProcessor, role: "query_processor" },
+    { kind: "retriever", ref: pipeline.retriever, role: "retriever" },
+    { kind: "reranker", ref: pipeline.reranker, role: "reranker" },
+    { kind: "answerer", ref: pipeline.answerer, role: "answerer" },
+  ],
   query_processor: pipeline.queryProcessor,
   retriever: pipeline.retriever,
   reranker: pipeline.reranker,
@@ -262,6 +291,7 @@ const buildEvaluators = (): EvaluatorRecord[] =>
   sampleEvaluators.map((evaluator) => ({
     id: evaluator.id,
     name: evaluator.name,
+    version: evaluator.version,
     family: evaluator.family,
     layer: toContractLayer(evaluator.layer),
     metric_type: evaluator.metricType,
@@ -294,6 +324,15 @@ const buildExperiments = (): { experiments: ExperimentRunRecord[]; traces: Trace
       id: experiment.experimentId,
       dataset_id: experiment.datasetId ?? sampleDatasets[0]!.id,
       pipeline_version: mapPipeline(experiment.target),
+      target: {
+        id: experiment.target.id,
+        type: "agent",
+        name: experiment.target.name,
+        version: experiment.target.version,
+        label: `${experiment.target.name} v${experiment.target.version}`,
+        scenario: mapAgentTarget(experiment.target).scenario,
+        entry_type: mapAgentTarget(experiment.target).entry_type,
+      },
       evaluator_ids: sampleEvaluators.map((evaluator) => evaluator.id),
       status: "FINISHED",
       summary: {

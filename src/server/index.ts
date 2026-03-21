@@ -4,7 +4,8 @@ import { stat } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import type {
-  AgentRecord,
+  AgentCompositionRecord,
+  AgentEntryType,
   BootstrapResponse,
   CodeEvaluatorStrategy,
   CreateAgentInput,
@@ -25,7 +26,6 @@ import type {
   LayerName,
   MetricType,
   PromptPreviewInput,
-  PromptPreviewResult,
   PromptRecord,
   ReplaceDatasetCasesInput,
   SynthesizeDatasetInput,
@@ -41,6 +41,8 @@ import {
   toDatasetCaseRecord,
   toDatasetRecord,
   toEvaluatorRecord,
+  toExperimentDetailRecord,
+  toExperimentListItemRecord,
   toExperimentRunRecord,
   toPromptRecord,
   toTraceRunRecord,
@@ -65,13 +67,18 @@ const mimeTypes: Record<string, string> = {
 
 const config = loadConfig(rootDir);
 const store = new FileBackedLocalStore(config.storeFilePath);
-const service = new EvalLoopService(store, createReferencePipelineExecutor());
+const service = new EvalLoopService(store, createReferencePipelineExecutor(), {
+  apiKey: config.geminiApiKey ?? "",
+  baseUrl: config.geminiBaseUrl,
+  model: config.geminiModel,
+});
 const ready = service.seedDefaults();
 
 const datasetTypes = new Set<DatasetType>(["ideal_output", "workflow", "trace_monitor"]);
 const layerNames = new Set<LayerName>(["retrieval", "rerank", "answer", "overall"]);
 const metricTypes = new Set<MetricType>(["binary", "continuous", "categorical"]);
 const evaluatorFamilies = new Set<EvaluatorFamily>(["model", "code"]);
+const agentEntryTypes = new Set<AgentEntryType>(["prompt", "api", "workflow"]);
 const codeStrategies = new Set<CodeEvaluatorStrategy>([
   "exact_match",
   "regex_match",
@@ -95,6 +102,35 @@ const sendError = (res: ServerResponse, statusCode: number, message: string) => 
   sendJson(res, statusCode, { error: message });
 };
 
+const sendExperimentCreationError = (res: ServerResponse, error: unknown) => {
+  const message = error instanceof Error ? error.message : "Experiment creation failed";
+
+  if (/api key is required/i.test(message)) {
+    sendError(res, 503, message);
+    return;
+  }
+
+  if (/gemini|quota|generatecontent|fetch failed|response did not include output text/i.test(message)) {
+    sendError(res, 502, message);
+    return;
+  }
+
+  if (/missing|mismatch|required|unsupported|invalid/i.test(message)) {
+    sendError(res, 400, message);
+    return;
+  }
+
+  sendError(res, 500, message);
+};
+
+const buildVersionMismatchMessage = (input: {
+  resourceLabel: string;
+  resourceId: string;
+  expectedVersion: string;
+  receivedVersion: string;
+}) =>
+  `${input.resourceLabel} version mismatch for ${input.resourceId}: expected ${input.expectedVersion}, received ${input.receivedVersion}`;
+
 const readJsonBody = async <T>(req: IncomingMessage): Promise<T> => {
   const chunks: Buffer[] = [];
   for await (const chunk of req) {
@@ -107,6 +143,61 @@ const readJsonBody = async <T>(req: IncomingMessage): Promise<T> => {
 
 const isObject = (value: unknown): value is Record<string, unknown> =>
   value !== null && typeof value === "object" && !Array.isArray(value);
+
+type SearchAgentModules = {
+  queryProcessor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+};
+
+const isAgentCompositionRecord = (value: unknown): value is AgentCompositionRecord =>
+  isObject(value) &&
+  typeof value.kind === "string" &&
+  typeof value.ref === "string" &&
+  (value.role === undefined || typeof value.role === "string");
+
+const buildSearchComposition = (modules: SearchAgentModules): AgentCompositionRecord[] => [
+  { kind: "query_processor", ref: modules.queryProcessor, role: "query_processor" },
+  { kind: "retriever", ref: modules.retriever, role: "retriever" },
+  { kind: "reranker", ref: modules.reranker, role: "reranker" },
+  { kind: "answerer", ref: modules.answerer, role: "answerer" },
+];
+
+const readCompositionRef = (
+  composition: AgentCompositionRecord[] | undefined,
+  aliases: string[],
+): string | undefined =>
+  composition?.find((item) => aliases.includes(item.role ?? item.kind))?.ref;
+
+const extractSearchModules = (payload: {
+  composition?: AgentCompositionRecord[];
+  query_processor?: string;
+  retriever?: string;
+  reranker?: string;
+  answerer?: string;
+  queryProcessor?: string;
+}) => {
+  const queryProcessor =
+    payload.query_processor ??
+    payload.queryProcessor ??
+    readCompositionRef(payload.composition, ["query_processor", "query_understanding"]);
+  const retriever = payload.retriever ?? readCompositionRef(payload.composition, ["retriever", "retrieval"]);
+  const reranker = payload.reranker ?? readCompositionRef(payload.composition, ["reranker", "ranking"]);
+  const answerer =
+    payload.answerer ?? readCompositionRef(payload.composition, ["answerer", "answer_generation"]);
+
+  if (!queryProcessor || !retriever || !reranker || !answerer) {
+    return null;
+  }
+
+  return {
+    queryProcessor,
+    retriever,
+    reranker,
+    answerer,
+  } satisfies SearchAgentModules;
+};
 
 const isSchemaField = (value: unknown): value is DatasetSchemaField =>
   isObject(value) &&
@@ -186,21 +277,86 @@ const parsePromptPreviewInput = (payload: unknown): PromptPreviewInput | null =>
 };
 
 const parseAgentInput = (payload: unknown): CreateAgentInput | null => {
+  if (!isObject(payload) || typeof payload.name !== "string") {
+    return null;
+  }
+
+  if (payload.description !== undefined && typeof payload.description !== "string") {
+    return null;
+  }
+
+  const composition =
+    payload.composition === undefined
+      ? undefined
+      : Array.isArray(payload.composition) && payload.composition.every(isAgentCompositionRecord)
+        ? payload.composition
+        : null;
+
+  if (composition === null) {
+    return null;
+  }
+
+  const hasGenericShape =
+    typeof payload.version === "string" &&
+    typeof payload.scenario === "string" &&
+    typeof payload.entry_type === "string" &&
+    agentEntryTypes.has(payload.entry_type as AgentEntryType) &&
+    typeof payload.artifact_ref === "string";
+
+  if (hasGenericShape) {
+    const version = payload.version as string;
+    const scenario = payload.scenario as string;
+    const entryType = payload.entry_type as AgentEntryType;
+    const artifactRef = payload.artifact_ref as string;
+
+    if (
+      (payload.query_processor !== undefined && typeof payload.query_processor !== "string") ||
+      (payload.retriever !== undefined && typeof payload.retriever !== "string") ||
+      (payload.reranker !== undefined && typeof payload.reranker !== "string") ||
+      (payload.answerer !== undefined && typeof payload.answerer !== "string")
+    ) {
+      return null;
+    }
+
+    return {
+      name: payload.name,
+      version,
+      description: payload.description,
+      scenario,
+      entry_type: entryType,
+      artifact_ref: artifactRef,
+      composition,
+      query_processor: payload.query_processor as string | undefined,
+      retriever: payload.retriever as string | undefined,
+      reranker: payload.reranker as string | undefined,
+      answerer: payload.answerer as string | undefined,
+    };
+  }
+
   if (
-    !isObject(payload) ||
-    typeof payload.name !== "string" ||
     typeof payload.query_processor !== "string" ||
     typeof payload.retriever !== "string" ||
     typeof payload.reranker !== "string" ||
-    typeof payload.answerer !== "string" ||
-    (payload.description !== undefined && typeof payload.description !== "string")
+    typeof payload.answerer !== "string"
   ) {
     return null;
   }
 
   return {
     name: payload.name,
+    version: "0.1.0",
     description: payload.description,
+    scenario: "ai_search",
+    entry_type: "workflow",
+    artifact_ref: `legacy:${payload.name}`,
+    composition:
+      composition ??
+      buildSearchComposition({
+        queryProcessor: payload.query_processor,
+        retriever: payload.retriever,
+        reranker: payload.reranker,
+        answerer: payload.answerer,
+      }),
     query_processor: payload.query_processor,
     retriever: payload.retriever,
     reranker: payload.reranker,
@@ -391,6 +547,17 @@ const parseDatasetSynthesisRoute = (pathname: string) => {
   };
 };
 
+const parseExperimentDetailRoute = (pathname: string) => {
+  const match = pathname.match(/^\/api\/experiments\/([^/]+)\/detail$/);
+  if (!match) {
+    return null;
+  }
+
+  return {
+    experimentId: decodeURIComponent(match[1]!),
+  };
+};
+
 const parseEvaluatorInput = (payload: unknown): CreateEvaluatorInput | null => {
   if (!isObject(payload)) {
     return null;
@@ -432,41 +599,81 @@ const parseEvaluatorInput = (payload: unknown): CreateEvaluatorInput | null => {
   };
 };
 
-const parseExperimentInput = (payload: unknown): CreateExperimentInput | null => {
-  if (!isObject(payload) || !isObject(payload.pipeline_version)) {
-    return null;
-  }
+const isExperimentFieldMapping = (value: unknown): value is CreateExperimentInput["prompt_variable_mappings"][number] =>
+  isObject(value) &&
+  typeof value.source_field === "string" &&
+  typeof value.target_field === "string" &&
+  (value.source_type === undefined || typeof value.source_type === "string") &&
+  (value.target_type === undefined || typeof value.target_type === "string");
 
-  const pipeline = payload.pipeline_version;
+const isExperimentEvaluatorBinding = (
+  value: unknown,
+): value is CreateExperimentInput["evaluator_bindings"][number] =>
+  isObject(value) &&
+  typeof value.evaluator_id === "string" &&
+  typeof value.evaluator_version === "string" &&
+  Array.isArray(value.field_mapping) &&
+  value.field_mapping.every(isExperimentFieldMapping) &&
+  typeof value.weight === "number" &&
+  Number.isFinite(value.weight);
+
+const isExperimentRunConfig = (value: unknown): value is CreateExperimentInput["run_config"] =>
+  isObject(value) &&
+  typeof value.concurrency === "number" &&
+  Number.isInteger(value.concurrency) &&
+  value.concurrency > 0 &&
+  typeof value.timeout_ms === "number" &&
+  Number.isInteger(value.timeout_ms) &&
+  value.timeout_ms >= 0 &&
+  typeof value.retry_limit === "number" &&
+  Number.isInteger(value.retry_limit) &&
+  value.retry_limit >= 0;
+
+const parseExperimentInput = (payload: unknown): CreateExperimentInput | null => {
   if (
+    !isObject(payload) ||
+    payload.target_type !== "prompt" ||
     typeof payload.dataset_id !== "string" ||
-    (payload.evaluator_ids !== undefined &&
-      (!Array.isArray(payload.evaluator_ids) || !payload.evaluator_ids.every((id) => typeof id === "string"))) ||
-    typeof pipeline.id !== "string" ||
-    typeof pipeline.name !== "string" ||
-    typeof pipeline.version !== "string" ||
-    typeof pipeline.query_processor !== "string" ||
-    typeof pipeline.retriever !== "string" ||
-    typeof pipeline.reranker !== "string" ||
-    typeof pipeline.answerer !== "string"
+    typeof payload.dataset_version !== "string" ||
+    typeof payload.prompt_id !== "string" ||
+    typeof payload.prompt_version !== "string" ||
+    !Array.isArray(payload.prompt_variable_mappings) ||
+    !payload.prompt_variable_mappings.every(isExperimentFieldMapping) ||
+    !isObject(payload.model_params) ||
+    !Array.isArray(payload.evaluator_bindings) ||
+    !payload.evaluator_bindings.every(isExperimentEvaluatorBinding) ||
+    !isExperimentRunConfig(payload.run_config)
   ) {
     return null;
   }
 
   return {
     dataset_id: payload.dataset_id,
-    evaluator_ids: payload.evaluator_ids as string[] | undefined,
-    pipeline_version: {
-      id: pipeline.id,
-      name: pipeline.name,
-      version: pipeline.version,
-      query_processor: pipeline.query_processor,
-      retriever: pipeline.retriever,
-      reranker: pipeline.reranker,
-      answerer: pipeline.answerer,
-    },
+    dataset_version: payload.dataset_version,
+    target_type: "prompt",
+    prompt_id: payload.prompt_id,
+    prompt_version: payload.prompt_version,
+    prompt_variable_mappings: payload.prompt_variable_mappings,
+    model_params: payload.model_params,
+    evaluator_bindings: payload.evaluator_bindings,
+    run_config: payload.run_config,
   };
 };
+
+const buildPromptModelConfig = (modelParams: Record<string, unknown>) => ({
+  model: config.geminiModel,
+  ...(typeof modelParams.temperature === "number" ? { temperature: modelParams.temperature } : {}),
+  ...(typeof modelParams.top_p === "number"
+    ? { topP: modelParams.top_p }
+    : typeof modelParams.topP === "number"
+      ? { topP: modelParams.topP }
+      : {}),
+  ...(typeof modelParams.max_output_tokens === "number"
+    ? { maxTokens: modelParams.max_output_tokens }
+    : typeof modelParams.maxTokens === "number"
+      ? { maxTokens: modelParams.maxTokens }
+      : {}),
+});
 
 const parseComparisonInput = (payload: unknown): CreateComparisonInput | null => {
   if (
@@ -535,21 +742,20 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
 
   const promptPreviewRoute = parsePromptPreviewRoute(pathname);
   if (req.method === "POST" && promptPreviewRoute) {
-    const prompt = await store.getPrompt(promptPreviewRoute.promptId);
-    if (!prompt) {
-      sendError(res, 404, "Prompt not found");
-      return true;
-    }
-
     const payload = parsePromptPreviewInput(await readJsonBody<unknown>(req));
     if (!payload) {
       sendError(res, 400, "Invalid prompt preview payload");
       return true;
     }
 
-    sendJson(res, 200, {
-      item: buildPromptPreviewResult(toPromptRecord(prompt), payload),
-    });
+    try {
+      sendJson(res, 200, {
+        item: await service.previewPrompt(promptPreviewRoute.promptId, payload),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Prompt preview failed";
+      sendError(res, message.startsWith("Missing prompt:") ? 404 : 502, message);
+    }
     return true;
   }
 
@@ -609,17 +815,42 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
+    if (payload.scenario !== "ai_search" || payload.entry_type !== "workflow") {
+      sendError(res, 400, "Current backend only supports ai_search workflow agents");
+      return true;
+    }
+
+    const modules = extractSearchModules(payload);
+    if (!modules) {
+      sendError(
+        res,
+        400,
+        "AI search workflow agents require query/retrieval/rerank/answer module refs",
+      );
+      return true;
+    }
+
     try {
       const agent = await service.createAgent({
         name: payload.name,
         description: payload.description,
-        queryProcessor: payload.query_processor,
-        retriever: payload.retriever,
-        reranker: payload.reranker,
-        answerer: payload.answerer,
+        queryProcessor: modules.queryProcessor,
+        retriever: modules.retriever,
+        reranker: modules.reranker,
+        answerer: modules.answerer,
       });
 
-      sendJson(res, 201, { item: toAgentRecord(agent) });
+      const storedAgent = {
+        ...agent,
+        version: payload.version,
+        scenario: payload.scenario,
+        entry_type: payload.entry_type,
+        artifact_ref: payload.artifact_ref,
+        composition: payload.composition ?? buildSearchComposition(modules),
+      };
+
+      await store.upsertAgent(storedAgent as typeof agent);
+      sendJson(res, 201, { item: toAgentRecord(storedAgent) });
     } catch (error) {
       sendError(res, 400, error instanceof Error ? error.message : "Invalid agent payload");
     }
@@ -911,7 +1142,22 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
   }
 
   if (req.method === "GET" && pathname === "/api/experiments") {
-    sendJson(res, 200, { items: (await service.listExperiments()).map(toExperimentRunRecord) });
+    const [experiments, datasets, evaluators] = await Promise.all([
+      service.listExperiments(),
+      service.listDatasets(),
+      service.listEvaluators(),
+    ]);
+
+    const datasetsById = new Map(datasets.map((dataset) => [dataset.id, dataset]));
+    sendJson(res, 200, {
+      items: experiments.map((experiment) =>
+        toExperimentListItemRecord(
+          experiment,
+          experiment.datasetId ? datasetsById.get(experiment.datasetId) : undefined,
+          evaluators,
+        ),
+      ),
+    });
     return true;
   }
 
@@ -922,25 +1168,120 @@ const handleApi = async (req: IncomingMessage, res: ServerResponse, pathname: st
       return true;
     }
 
+    const dataset = await store.getDataset(payload.dataset_id);
+    if (!dataset) {
+      sendError(res, 404, "Dataset not found");
+      return true;
+    }
+
+    if (dataset.version !== payload.dataset_version) {
+      sendError(
+        res,
+        400,
+        buildVersionMismatchMessage({
+          resourceLabel: "Dataset",
+          resourceId: payload.dataset_id,
+          expectedVersion: dataset.version,
+          receivedVersion: payload.dataset_version,
+        }),
+      );
+      return true;
+    }
+
+    const prompt = await store.getPrompt(payload.prompt_id);
+    if (!prompt) {
+      sendError(res, 404, "Prompt not found");
+      return true;
+    }
+
+    if (prompt.version !== payload.prompt_version) {
+      sendError(
+        res,
+        400,
+        buildVersionMismatchMessage({
+          resourceLabel: "Prompt",
+          resourceId: payload.prompt_id,
+          expectedVersion: prompt.version,
+          receivedVersion: payload.prompt_version,
+        }),
+      );
+      return true;
+    }
+
+    for (const binding of payload.evaluator_bindings) {
+      const evaluator = await store.getEvaluator(binding.evaluator_id);
+      if (!evaluator) {
+        sendError(res, 404, `Evaluator not found: ${binding.evaluator_id}`);
+        return true;
+      }
+
+      if (evaluator.version !== binding.evaluator_version) {
+        sendError(
+          res,
+          400,
+          buildVersionMismatchMessage({
+            resourceLabel: "Evaluator",
+            resourceId: binding.evaluator_id,
+            expectedVersion: evaluator.version,
+            receivedVersion: binding.evaluator_version,
+          }),
+        );
+        return true;
+      }
+    }
+
+    if (payload.target_type !== "prompt") {
+      sendError(res, 400, "Only prompt experiments are supported in this MVP");
+      return true;
+    }
+
     try {
       const experiment = await service.runExperiment({
         datasetId: payload.dataset_id,
-        evaluatorIds: payload.evaluator_ids,
-        target: {
-          id: payload.pipeline_version.id,
-          name: payload.pipeline_version.name,
-          version: payload.pipeline_version.version,
-          queryProcessor: payload.pipeline_version.query_processor,
-          retriever: payload.pipeline_version.retriever,
-          reranker: payload.pipeline_version.reranker,
-          answerer: payload.pipeline_version.answerer,
+        evaluatorIds: payload.evaluator_bindings.map((binding) => binding.evaluator_id),
+        target: prompt,
+        promptBinding: {
+          variableMappings: payload.prompt_variable_mappings.map((field) => ({
+            sourceField: field.source_field,
+            targetField: field.target_field,
+          })),
+          modelConfig: buildPromptModelConfig(payload.model_params),
+          modelParams: payload.model_params,
+        },
+        runConfig: {
+          concurrency: payload.run_config.concurrency,
+          timeoutMs: payload.run_config.timeout_ms,
+          retryLimit: payload.run_config.retry_limit,
         },
       });
 
+      await store.upsertExperimentContract(experiment.experimentId, payload);
+
       sendJson(res, 201, { item: toExperimentRunRecord(experiment) });
     } catch (error) {
-      sendError(res, 400, error instanceof Error ? error.message : "Invalid experiment payload");
+      sendExperimentCreationError(res, error);
     }
+    return true;
+  }
+
+  const experimentDetailRoute = parseExperimentDetailRoute(pathname);
+  if (req.method === "GET" && experimentDetailRoute) {
+    const bundle = await store.getExperimentDetailBundle(experimentDetailRoute.experimentId);
+    if (!bundle) {
+      sendError(res, 404, "Experiment not found");
+      return true;
+    }
+
+    sendJson(res, 200, {
+      item: toExperimentDetailRecord({
+        experiment: bundle.experiment,
+        dataset: bundle.dataset,
+        prompt: bundle.prompt,
+        evaluators: bundle.evaluators,
+        comparisons: bundle.comparisons,
+        contract: bundle.contract,
+      }),
+    });
     return true;
   }
 
@@ -1047,33 +1388,4 @@ const getDatasetCaseKey = (item: object): string | undefined => {
 
   const id = Reflect.get(item, "id");
   return typeof id === "string" ? id : undefined;
-};
-
-const buildPromptPreviewResult = (
-  prompt: PromptRecord,
-  input: PromptPreviewInput,
-): PromptPreviewResult => {
-  const renderedSystem = applyPromptVariables(prompt.system_prompt, input.input, input.variables);
-  const renderedUser = applyPromptVariables(prompt.user_template, input.input, input.variables);
-
-  return {
-    prompt_id: prompt.id,
-    input: input.input,
-    rendered_system_prompt: renderedSystem,
-    rendered_user_prompt: renderedUser,
-    output_preview: `Preview only: ${input.input}`,
-    created_at: new Date().toISOString(),
-  };
-};
-
-const applyPromptVariables = (
-  template: string,
-  input: string,
-  variables?: Record<string, string>,
-): string => {
-  const entries = { input, ...(variables ?? {}) };
-  return Object.entries(entries).reduce(
-    (result, [key, value]) => result.replaceAll(`{{${key}}}`, value),
-    template,
-  );
 };

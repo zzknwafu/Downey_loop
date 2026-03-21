@@ -7,6 +7,9 @@ export interface AppConfig {
   port: number;
   nodeEnv: string;
   appBaseUrl: string;
+  geminiApiKey?: string;
+  geminiBaseUrl: string;
+  geminiModel: string;
   dataDir: string;
   sqlitePath: string;
   stateFilePath: string;
@@ -59,6 +62,12 @@ export const loadConfig = (rootDir = process.cwd()): AppConfig => {
     port,
     nodeEnv: env("NODE_ENV", "development"),
     appBaseUrl: env("APP_BASE_URL", `http://${host}:${port}`),
+    geminiApiKey: env("GEMINI_API_KEY", env("OPENAI_API_KEY", "")),
+    geminiBaseUrl: env(
+      "GEMINI_BASE_URL",
+      env("OPENAI_BASE_URL", "https://generativelanguage.googleapis.com/v1beta"),
+    ),
+    geminiModel: "gemini-2.5-flash",
     dataDir,
     sqlitePath,
     stateFilePath: path.join(dataDir, "app-state.json"),

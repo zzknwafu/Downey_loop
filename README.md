@@ -33,6 +33,32 @@ npm run dev
 - Web UI: `http://127.0.0.1:5173`
 - API: `http://127.0.0.1:3000`
 
+## AI 配置
+
+当前运行时固定使用 Gemini 2.5 Flash，不做模型切换器，也不做多模型支持。
+
+推荐在 `.env` 里配置：
+
+```env
+GEMINI_API_KEY=你的Gemini_API_Key
+GEMINI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+```
+
+如果你还在迁移旧环境，也可以继续保留兼容变量：
+
+```env
+OPENAI_API_KEY=你的兼容Key
+OPENAI_BASE_URL=https://generativelanguage.googleapis.com/v1beta
+```
+
+优先级规则：
+
+- 服务端优先读 `GEMINI_API_KEY` / `GEMINI_BASE_URL`
+- 如果没有，再回退读 `OPENAI_API_KEY` / `OPENAI_BASE_URL`
+- 模型名固定为 `gemini-2.5-flash`
+
+非 Gemini / OpenAI 的 provider 当前不自动支持。要接其他厂商，建议新增一层 provider adapter，再让服务端注入统一接口，而不是在业务层继续堆条件分支。
+
 生产构建：
 
 ```bash
@@ -120,3 +146,7 @@ npm start
 - `DATA_DIR`
 - `STORE_FILE`
 - `SQLITE_PATH`
+- `GEMINI_API_KEY`
+- `GEMINI_BASE_URL`
+- `OPENAI_API_KEY` 兼容读取
+- `OPENAI_BASE_URL` 兼容读取

@@ -114,6 +114,7 @@ Issue 候选：
 
 - 提供轻量 PromptVersion / AgentVersion 管理
 - 为实验提供可选择的被测对象
+- 将 Agent 从固定 AI Search pipeline 升级为通用版本化 target
 
 Issue 候选：
 
@@ -125,6 +126,12 @@ Issue 候选：
   - 支持 PromptVersion
   - 支持 AgentVersion
   - 支持实验通过 target 引用被测对象
+  - AgentVersion 不再固定为 `query_processor / retriever / reranker / answerer`
+  - AgentVersion v1 支持：
+    - `scenario`
+    - `entry_type`
+    - `artifact_ref`
+    - `composition?`
 
 #### B2. 实现 Targets 列表页
 
@@ -133,6 +140,8 @@ Issue 候选：
 - 验收标准：
   - 可查看 prompts 与 agents
   - 可显示名称、版本、说明
+  - Prompts / Agents 平级展示
+  - Agent List 展示 `Scenario / Composition summary / Last Eval Score`
 
 #### B3. 实现轻量“新建 Prompt / 新建 Agent”流程
 
@@ -141,6 +150,8 @@ Issue 候选：
 - 验收标准：
   - 不做重型 IDE
   - 可录入最小字段并保存
+  - Create Agent 采用 `Simple / Advanced` 双模式
+  - `Simple Mode` 为默认入口
 
 #### B4. 实现 Prompt template 与 Preview/debug
 
@@ -151,6 +162,31 @@ Issue 候选：
   - Prompt 页面支持单次 preview/debug 测试
   - 不强制实现 `common configuration`
   - preview/debug 只服务单次调试，不替代实验
+
+#### B5. 重写 AgentVersion contract 与兼容映射
+
+- 类型：integration
+- 优先级：P0
+- 验收标准：
+  - 旧 AI Search pipeline 数据能被映射成新 AgentVersion
+  - baseline / candidate 继续可被消费
+  - contract/store 不再把 AI Search 固定字段当作 Agent 唯一定义
+
+#### B6. 设计 module composition 声明结构
+
+- 类型：documentation
+- 优先级：P1
+- 验收标准：
+  - composition 只做声明，不绑定执行语义
+  - starter set 明确：
+    - `query_understanding`
+    - `retrieval`
+    - `ranking`
+    - `answer_generation`
+    - `planning`
+    - `tool_use`
+    - `memory`
+    - `verification`
 
 ### Epic C. Dataset 模块
 

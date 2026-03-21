@@ -18,7 +18,12 @@ import {
   PromptVersion,
   TraceRun,
 } from "../domain/types.js";
-import type { DatasetCaseRecord, DatasetSynthesisDirection, DatasetSynthesisResult } from "../shared/contracts.js";
+import type {
+  CreateExperimentInput,
+  DatasetCaseRecord,
+  DatasetSynthesisDirection,
+  DatasetSynthesisResult,
+} from "../shared/contracts.js";
 
 const emptySnapshot = (): LocalStoreSnapshot => ({
   datasets: [],
@@ -31,7 +36,11 @@ const emptySnapshot = (): LocalStoreSnapshot => ({
 });
 
 export class FileBackedLocalStore {
-  constructor(private readonly storeFile: string) {}
+  private readonly experimentContractFile: string;
+
+  constructor(private readonly storeFile: string) {
+    this.experimentContractFile = `${storeFile}.experiment-contracts.json`;
+  }
 
   async load(): Promise<LocalStoreSnapshot> {
     try {
@@ -51,6 +60,12 @@ export class FileBackedLocalStore {
   async save(snapshot: LocalStoreSnapshot): Promise<void> {
     await mkdir(dirname(this.storeFile), { recursive: true });
     await writeFile(this.storeFile, JSON.stringify(snapshot, null, 2), "utf-8");
+  }
+
+  async upsertExperimentContract(experimentId: string, contract: CreateExperimentInput): Promise<void> {
+    const snapshot = await this.loadExperimentContracts();
+    snapshot[experimentId] = contract;
+    await this.saveExperimentContracts(snapshot);
   }
 
   async upsertDataset(dataset: Dataset): Promise<void> {
@@ -334,6 +349,61 @@ export class FileBackedLocalStore {
     return snapshot.experiments.find((experiment) => experiment.experimentId === experimentId);
   }
 
+  async getExperimentDetailBundle(experimentId: string): Promise<
+    | {
+        experiment: ExperimentRun;
+        dataset?: Dataset;
+        prompt?: PromptVersion;
+        evaluators: Evaluator[];
+        comparisons: ExperimentComparison[];
+        traces: TraceRun[];
+        contract?: CreateExperimentInput;
+      }
+    | undefined
+  > {
+    const snapshot = await this.load();
+    const experimentContracts = await this.loadExperimentContracts();
+    const experiment = snapshot.experiments.find((item) => item.experimentId === experimentId);
+    if (!experiment) {
+      return undefined;
+    }
+
+    const contract = experimentContracts[experimentId];
+    const dataset = experiment.datasetId
+      ? snapshot.datasets.find((item) => item.id === experiment.datasetId)
+      : undefined;
+    const prompt =
+      contract?.prompt_id ? snapshot.prompts.find((item) => item.id === contract.prompt_id) : undefined;
+    const evaluators =
+      experiment.evaluatorIds && experiment.evaluatorIds.length > 0
+        ? experiment.evaluatorIds.flatMap((evaluatorId) => {
+            const evaluator = snapshot.evaluators.find((item) => item.id === evaluatorId);
+            return evaluator ? [evaluator] : [];
+          })
+        : snapshot.evaluators;
+    const comparisons = snapshot.comparisons.filter(
+      (comparison) =>
+        comparison.baselineExperimentId === experimentId ||
+        comparison.candidateExperimentId === experimentId,
+    );
+    const traces = experiment.caseRuns
+      .map((caseRun) => caseRun.trace.traceId)
+      .flatMap((traceId) => {
+        const trace = snapshot.traces.find((item) => item.traceId === traceId);
+        return trace ? [trace] : [];
+      });
+
+    return {
+      experiment,
+      dataset,
+      prompt,
+      evaluators,
+      comparisons,
+      traces,
+      contract,
+    };
+  }
+
   async getComparison(
     baselineExperimentId: string,
     candidateExperimentId: string,
@@ -353,6 +423,24 @@ export class FileBackedLocalStore {
 
   async seed(snapshot: LocalStoreSnapshot): Promise<void> {
     await this.save(snapshot);
+  }
+
+  private async loadExperimentContracts(): Promise<Record<string, CreateExperimentInput>> {
+    try {
+      const raw = await readFile(this.experimentContractFile, "utf-8");
+      return JSON.parse(raw) as Record<string, CreateExperimentInput>;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+        return {};
+      }
+
+      throw error;
+    }
+  }
+
+  private async saveExperimentContracts(snapshot: Record<string, CreateExperimentInput>): Promise<void> {
+    await mkdir(dirname(this.experimentContractFile), { recursive: true });
+    await writeFile(this.experimentContractFile, JSON.stringify(snapshot, null, 2), "utf-8");
   }
 }
 

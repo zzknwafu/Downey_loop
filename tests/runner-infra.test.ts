@@ -7,7 +7,12 @@ import { loadAppConfig } from "../src/infra/config.js";
 import { FileBackedLocalStore } from "../src/infra/store.js";
 import { ExperimentRunner } from "../src/runner/experiment-runner.js";
 import { createSeedSnapshot } from "../src/shared/mock-data.js";
-import { sampleDatasets, sampleEvaluators, baselinePipeline } from "../src/domain/sample-data.js";
+import {
+  baselinePipeline,
+  sampleDatasets,
+  sampleEvaluators,
+  samplePrompts,
+} from "../src/domain/sample-data.js";
 
 const tempDirs: string[] = [];
 
@@ -38,12 +43,66 @@ describe("runner and infra", () => {
     expect(experiment.status).toBe("FINISHED");
     expect(experiment.summary.totalCases).toBe(dataset.cases.length);
     expect(experiment.summary.completedCases).toBe(dataset.cases.length);
+    expect(experiment.configuration?.dataset.id).toBe(dataset.id);
+    expect(experiment.configuration?.evaluators).toHaveLength(sampleEvaluators.length);
+    expect(experiment.configuration?.runConfig.sampleCount).toBe(dataset.cases.length);
+    expect(experiment.evaluatorSet?.evaluatorIds).toHaveLength(sampleEvaluators.length);
+    expect(experiment.basicInfo?.dataset.id).toBe(dataset.id);
+    expect(experiment.summary.metricSummaries.length).toBeGreaterThan(0);
+    expect(experiment.summary.layerSummaries.some((summary) => summary.layer === "overall")).toBe(true);
+  });
+
+  it("runs prompt targets through a compatible execution target", async () => {
+    const dataset = sampleDatasets[0]!;
+    const runner = new ExperimentRunner(async (evalCase) => ({
+      retrievalResult: evalCase.retrievalCandidates.slice(0, 2),
+      rerankResult: evalCase.retrievalCandidates.slice(0, 2),
+      answerOutput: evalCase.answerReference,
+      latencyMs: { retrieval: 10, rerank: 10, answer: 10 },
+    }));
+
+    const { experiment } = await runner.runExperiment({
+      dataset,
+      target: samplePrompts[0]!,
+      evaluators: sampleEvaluators,
+    });
+
+    expect(experiment.targetSelection?.type).toBe("prompt");
+    expect(experiment.pipelineVersionId).toContain("__prompt_execution");
+    expect(experiment.basicInfo?.target.type).toBe("prompt");
+  });
+
+  it("scores only the selected evaluator subset in experiment runs", async () => {
+    const dataset = sampleDatasets[0]!;
+    const selectedEvaluators = sampleEvaluators.filter((evaluator) =>
+      ["retrieval_coverage", "answer_correctness", "proxy_cvr"].includes(evaluator.name),
+    );
+    const runner = new ExperimentRunner(async (evalCase) => ({
+      retrievalResult: evalCase.retrievalCandidates.slice(0, 2),
+      rerankResult: evalCase.retrievalCandidates.slice(0, 2),
+      answerOutput: evalCase.answerReference,
+      latencyMs: { retrieval: 10, rerank: 10, answer: 10 },
+    }));
+
+    const { experiment } = await runner.runExperiment({
+      dataset,
+      target: samplePrompts[0]!,
+      evaluators: selectedEvaluators,
+    });
+
+    expect(experiment.evaluatorSet?.bindings).toHaveLength(3);
+    expect(experiment.caseRuns[0]?.scores).toHaveLength(3);
+    expect(experiment.caseRuns[0]?.scores.map((metric) => metric.metricName)).toEqual([
+      "retrieval_coverage",
+      "answer_correctness",
+      "proxy_cvr",
+    ]);
   });
 
   it("loads config defaults without requiring explicit env", () => {
     const config = loadAppConfig({});
-    expect(config.openAiBaseUrl).toBe("https://api.openai.com/v1");
-    expect(config.openAiModel).toBe("gpt-4.1-mini");
+    expect(config.geminiBaseUrl).toBe("https://generativelanguage.googleapis.com/v1beta");
+    expect(config.geminiModel).toBe("gemini-2.5-flash");
     expect(config.storeFile.endsWith("downey-evals-store.json")).toBe(true);
   });
 
@@ -88,11 +147,17 @@ describe("runner and infra", () => {
     });
     const createdAgent = await api.createAgent({
       name: "Debug Agent",
+      version: "1.2.0",
       description: "preview agent",
-      query_processor: "qp-debug",
-      retriever: "ret-debug",
-      reranker: "rr-debug",
-      answerer: "ans-debug",
+      scenario: "ai_search",
+      entry_type: "workflow",
+      artifact_ref: "agent://debug",
+      composition: [
+        { kind: "query_processor", ref: "qp-debug", role: "query_processor" },
+        { kind: "retriever", ref: "ret-debug", role: "retriever" },
+        { kind: "reranker", ref: "rr-debug", role: "reranker" },
+        { kind: "answerer", ref: "ans-debug", role: "answerer" },
+      ],
     });
 
     const prompts = await api.listPrompts();
@@ -105,10 +170,28 @@ describe("runner and infra", () => {
 
     expect(prompts[0]?.id).toBe(createdPrompt.id);
     expect(agents[0]?.id).toBe(createdAgent.id);
+    expect(agents[0]?.version).toBe("1.2.0");
     expect(fetchedPrompt?.system_prompt).toContain("{{input}}");
+    expect(fetchedAgent?.scenario).toBe("ai_search");
+    expect(fetchedAgent?.entry_type).toBe("workflow");
     expect(fetchedAgent?.query_processor).toBe("qp-debug");
     expect(preview?.rendered_user_prompt).toContain("spicy noodles");
     expect(preview?.output_preview).toContain("spicy noodles");
+    expect(preview?.actual_model_output).toContain("spicy noodles");
+  });
+
+  it("exposes experiment list items and detail summaries through the mock api", async () => {
+    const api = createMockEvalLoopApi();
+    const items = await api.listExperimentItems();
+    const detail = await api.getExperimentDetail("exp_baseline");
+
+    expect(items[0]?.creator).toBe("system");
+    expect(items[0]?.description.length).toBeGreaterThan(0);
+    expect(items[0]?.evaluator_summary.total_count).toBeGreaterThan(0);
+    expect(items[0]?.evaluator_summary.by_layer.length).toBeGreaterThan(0);
+    expect(detail?.aggregated_metrics.layer_summaries.length).toBeGreaterThan(0);
+    expect(detail?.configuration_snapshot.evaluator_bindings.length).toBeGreaterThan(0);
+    expect(detail?.configuration_snapshot.evaluator_bindings[0]?.field_mapping.length).toBeGreaterThan(0);
   });
 
   it("supports dataset list, get and create through the mock api contract", async () => {
@@ -261,5 +344,32 @@ describe("runner and infra", () => {
 
     expect(experimentIds.has(snapshot.ab_experiment.baseline_run_id)).toBe(true);
     expect(experimentIds.has(snapshot.ab_experiment.candidate_run_id)).toBe(true);
+  });
+
+  it("exposes experiment detail contract with case detail, statistics, configuration and trace payload", async () => {
+    const api = createMockEvalLoopApi();
+    const detail = await api.getExperimentDetail("exp_baseline");
+
+    expect(detail?.basic_info.id).toBe("exp_baseline");
+    expect(detail?.basic_info.creator).toBe("system");
+    expect(detail?.basic_info.description.length).toBeGreaterThan(0);
+    expect(detail?.basic_info.evaluator_summary.total_count).toBeGreaterThan(0);
+    expect(detail?.basic_info.evaluator_summary.by_layer.length).toBeGreaterThan(0);
+    expect(detail?.basic_info.started_at).toBeTruthy();
+    expect(detail?.basic_info.finished_at).toBeTruthy();
+    expect(detail?.case_results.length).toBeGreaterThan(0);
+    expect(detail?.case_results[0]?.trace?.trajectory.length).toBeGreaterThan(0);
+    expect(detail?.case_results[0]?.drawer.evaluator_score_table.length).toBeGreaterThan(0);
+    expect(detail?.aggregated_metrics.evaluator_aggregated_scores.length).toBeGreaterThan(0);
+    expect(detail?.aggregated_metrics.latency_summary).toHaveLength(4);
+    expect(detail?.configuration_snapshot.dataset_info?.id).toBeDefined();
+    expect(detail?.configuration_snapshot.evaluator_list.length).toBeGreaterThan(0);
+    expect(detail?.configuration_snapshot.evaluator_list.every((item) => item.version.length > 0)).toBe(
+      true,
+    );
+    expect(detail?.configuration_snapshot.field_mappings.length).toBeGreaterThan(0);
+    expect(Object.keys(detail?.configuration_snapshot.weight_multipliers ?? {})).not.toHaveLength(0);
+    expect((detail?.configuration_snapshot.run_config.retry_limit as number | undefined)).toBeDefined();
+    expect(detail?.root_cause.latest_comparison?.baseline_run_id).toBe("exp_baseline");
   });
 });

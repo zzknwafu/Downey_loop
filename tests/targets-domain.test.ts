@@ -1,12 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { baselinePipeline, samplePrompts } from "../src/domain/sample-data.js";
 import {
+  createAgentVersion,
+  createPromptVersion,
   describeTargetSelection,
   formatTargetLabel,
   isAgentVersion,
   isPromptVersion,
+  listCompatibleDatasetTypes,
   toTargetRef,
   toTargetSelection,
+  validateTargetDatasetCompatibility,
 } from "../src/domain/targets.js";
 
 describe("target domain helpers", () => {
@@ -40,6 +44,46 @@ describe("target domain helpers", () => {
     expect(agentSelection.type).toBe("agent");
     expect(describeTargetSelection(promptSelection)).toContain("Prompt");
     expect(describeTargetSelection(agentSelection)).toContain("Agent");
+  });
+
+  it("creates normalized prompt and agent versions for target management", () => {
+    const prompt = createPromptVersion({
+      id: "prompt_custom_test",
+      name: "  食搜 Prompt  ",
+      description: "  简洁回答  ",
+      systemPrompt: "  你是食搜助手  ",
+      userTemplate: "  输入：{{input}}  ",
+    });
+    const agent = createAgentVersion({
+      id: "agent_custom_test",
+      name: "  食搜 Agent  ",
+      description: "  baseline  ",
+      queryProcessor: " qp-v1 ",
+      retriever: " retriever-v1 ",
+      reranker: " reranker-v1 ",
+      answerer: " answerer-v1 ",
+    });
+
+    expect(prompt.name).toBe("食搜 Prompt");
+    expect(prompt.systemPrompt).toBe("你是食搜助手");
+    expect(prompt.userTemplate).toBe("输入：{{input}}");
+    expect(agent.name).toBe("食搜 Agent");
+    expect(agent.retriever).toBe("retriever-v1");
+  });
+
+  it("locks target and dataset compatibility for experiment setup", () => {
+    expect(listCompatibleDatasetTypes("prompt")).toEqual(["ideal_output"]);
+    expect(listCompatibleDatasetTypes("agent")).toEqual([
+      "ideal_output",
+      "workflow",
+      "trace_monitor",
+    ]);
+
+    expect(() => validateTargetDatasetCompatibility(samplePrompts[0]!, "ideal_output")).not.toThrow();
+    expect(() => validateTargetDatasetCompatibility(samplePrompts[0]!, "workflow")).toThrow(
+      /not compatible/,
+    );
+    expect(() => validateTargetDatasetCompatibility(baselinePipeline, "trace_monitor")).not.toThrow();
   });
 
   it("includes migrated Coze Loop evaluator prompts in prompt assets", () => {

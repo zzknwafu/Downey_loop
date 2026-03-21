@@ -79,6 +79,7 @@ export class LocalStore {
     const record: EvaluatorRecord = {
       id: customId("evaluator"),
       name: input.name,
+      version: "0.1.0",
       family: input.family,
       layer: input.layer,
       metric_type: input.metric_type,

@@ -14,6 +14,8 @@ import type {
   DatasetSynthesisDirection,
   DatasetSynthesisResult,
   EvaluatorRecord,
+  ExperimentDetailRecord,
+  ExperimentListItemRecord,
   ExperimentRunRecord,
   ItemResponse,
   ListResponse,
@@ -34,7 +36,17 @@ type LegacySynthesizeDatasetInput = {
 
 const expectOk = async <T>(response: Response): Promise<T> => {
   if (!response.ok) {
-    throw new Error(`API request failed: ${response.status}`);
+    let message = `API request failed: ${response.status}`;
+    try {
+      const payload = (await response.json()) as { error?: string };
+      if (typeof payload.error === "string" && payload.error.trim().length > 0) {
+        message = payload.error;
+      }
+    } catch {
+      // Preserve the status-only fallback when the body is empty or invalid JSON.
+    }
+
+    throw new Error(message);
   }
 
   return (await response.json()) as T;
@@ -247,9 +259,19 @@ export const createComparison = async (payload: CreateComparisonInput) => {
   return expectOk<ItemResponse<AbExperimentRecord>>(response);
 };
 
+export const fetchExperimentItems = async () => {
+  const response = await fetch("/api/experiments");
+  return expectOk<ListResponse<ExperimentListItemRecord>>(response);
+};
+
 export const fetchExperiment = async (experimentId: string) => {
   const response = await fetch(`/api/experiments/${experimentId}`);
   return expectOk<ItemResponse<ExperimentRunRecord>>(response);
+};
+
+export const fetchExperimentDetail = async (experimentId: string) => {
+  const response = await fetch(`/api/experiments/${experimentId}/detail`);
+  return expectOk<ItemResponse<ExperimentDetailRecord>>(response);
 };
 
 export const fetchTrace = async (traceId: string) => {

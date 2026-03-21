@@ -10,6 +10,7 @@ export type CodeEvaluatorStrategy =
 
 export type ExperimentStatus = "CREATED" | "RUNNING" | "FINISHED" | "FAILED";
 export type CaseResultStatus = "success" | "invalid_judgment" | "runtime_error";
+export type ExperimentExecutionState = "queued" | "running" | "completed" | "failed";
 export type StorageDriver = "local_json";
 export type DatasetColumnType = "String" | "Number" | "Boolean" | "JSON";
 
@@ -66,6 +67,8 @@ export type DatasetSynthesisDirection =
   | "augment_failures"
   | "augment_guardrails"
   | "align_online_distribution";
+export type TargetType = "prompt" | "agent";
+export type AgentEntryType = "prompt" | "api" | "workflow";
 
 export interface DatasetSynthesisSuggestion {
   id: string;
@@ -120,15 +123,41 @@ export interface PromptRecord {
   user_template: string;
 }
 
+export interface AgentCompositionRecord {
+  kind: string;
+  ref: string;
+  role?: string;
+}
+
 export interface AgentRecord {
   id: string;
   name: string;
   version: string;
   description?: string;
-  query_processor: string;
-  retriever: string;
-  reranker: string;
-  answerer: string;
+  scenario: string;
+  entry_type: AgentEntryType;
+  artifact_ref: string;
+  composition?: AgentCompositionRecord[];
+  query_processor?: string;
+  retriever?: string;
+  reranker?: string;
+  answerer?: string;
+}
+
+export interface TargetRefInput {
+  id: string;
+  type: TargetType;
+  version: string;
+}
+
+export interface TargetSelectionRecord {
+  id: string;
+  type: TargetType;
+  name: string;
+  version: string;
+  label: string;
+  scenario?: string;
+  entry_type?: AgentEntryType;
 }
 
 export interface CreatePromptInput {
@@ -140,11 +169,16 @@ export interface CreatePromptInput {
 
 export interface CreateAgentInput {
   name: string;
+  version: string;
   description?: string;
-  query_processor: string;
-  retriever: string;
-  reranker: string;
-  answerer: string;
+  scenario: string;
+  entry_type: AgentEntryType;
+  artifact_ref: string;
+  composition?: AgentCompositionRecord[];
+  query_processor?: string;
+  retriever?: string;
+  reranker?: string;
+  answerer?: string;
 }
 
 export interface PromptPreviewInput {
@@ -158,12 +192,15 @@ export interface PromptPreviewResult {
   rendered_system_prompt: string;
   rendered_user_prompt: string;
   output_preview: string;
+  actual_model_output: string;
+  debug_info?: Record<string, unknown>;
   created_at: string;
 }
 
 export interface EvaluatorRecord {
   id: string;
   name: string;
+  version: string;
   family: EvaluatorFamily;
   layer: LayerName;
   metric_type: MetricType;
@@ -185,6 +222,8 @@ export interface SearchPipelineVersionRecord {
 }
 
 export interface MetricScoreRecord {
+  evaluator_id?: string;
+  evaluator_name?: string;
   metric_name: string;
   layer: LayerName;
   metric_type: MetricType;
@@ -205,11 +244,22 @@ export interface CaseResultRecord {
   output: CaseOutputRecord;
   scores: MetricScoreRecord[];
   trace_id: string;
+  status: CaseResultStatus;
+  execution_state: ExperimentExecutionState;
+  message?: string | null;
+  runtime_error?: string | null;
 }
 
 export interface ExperimentSummaryMetric {
   metric_name: string;
   layer: LayerName;
+  average_score: number;
+}
+
+export interface ExperimentSummaryLayer {
+  layer: LayerName;
+  evaluator_count: number;
+  metric_count: number;
   average_score: number;
 }
 
@@ -222,12 +272,222 @@ export interface ExperimentRunRecord {
   id: string;
   dataset_id: string;
   pipeline_version: SearchPipelineVersionRecord;
+  target?: TargetSelectionRecord;
   evaluator_ids: string[];
   status: ExperimentStatus;
+  execution_state?: ExperimentExecutionState;
+  failure_reason?: string | null;
   summary: ExperimentSummaryRecord;
   case_results: CaseResultRecord[];
   created_at: string;
   updated_at: string;
+}
+
+export interface ExperimentListItemRecord {
+  id: string;
+  creator: string;
+  description: string;
+  dataset_id: string;
+  target?: TargetSelectionRecord;
+  pipeline_version?: SearchPipelineVersionRecord;
+  evaluator_summary: ExperimentEvaluatorSummaryRecord;
+  status: ExperimentStatus;
+  execution_state?: ExperimentExecutionState;
+  failure_reason?: string | null;
+  overall_score: number | null;
+  case_count: number;
+  completed_case_count: number;
+  failed_case_count: number;
+  invalid_judgment_count: number;
+  started_at: string | null;
+  finished_at: string | null;
+}
+
+export interface ExperimentBasicInfoRecord {
+  id: string;
+  creator: string;
+  description: string;
+  dataset_id: string;
+  target?: TargetSelectionRecord;
+  pipeline_version?: SearchPipelineVersionRecord;
+  evaluator_ids: string[];
+  evaluator_summary: ExperimentEvaluatorSummaryRecord;
+  status: ExperimentStatus;
+  execution_state?: ExperimentExecutionState;
+  failure_reason?: string | null;
+  started_at: string | null;
+  finished_at: string | null;
+  case_count: number;
+  completed_case_count: number;
+  failed_case_count: number;
+  invalid_judgment_count: number;
+  created_at: string;
+  updated_at: string;
+}
+
+export interface ExperimentEvaluatorLayerSummaryRecord {
+  layer: LayerName;
+  count: number;
+  evaluator_names: string[];
+}
+
+export interface ExperimentEvaluatorSummaryRecord {
+  total_count: number;
+  names: string[];
+  by_layer: ExperimentEvaluatorLayerSummaryRecord[];
+}
+
+export interface ExperimentOperationMetadataRecord {
+  status: CaseResultStatus;
+  execution_state: ExperimentExecutionState;
+  trace_id: string;
+  trace_link: string;
+  trace_available: boolean;
+  total_latency_ms: number | null;
+  message?: string | null;
+  runtime_error?: string | null;
+}
+
+export interface ExperimentScoreReasonRecord {
+  metric_name: string;
+  evaluator_id?: string;
+  evaluator_name?: string;
+  reason: string;
+  evidence?: string[];
+}
+
+export interface ExperimentCaseDrawerRecord {
+  evaluation_set_data: DatasetCaseRecord | null;
+  evaluated_object_output: CaseOutputRecord;
+  trajectory: TraceStepRecord[];
+  trace: TraceRunRecord | null;
+  evaluator_score_table: MetricScoreRecord[];
+  scoring_reasons: ExperimentScoreReasonRecord[];
+}
+
+export interface ExperimentCaseDetailRecord {
+  case_id: string;
+  input: string | null;
+  reference_output: string | null;
+  actual_output: string | null;
+  execution_state: ExperimentExecutionState;
+  failure_reason: string | null;
+  trace_link: string;
+  trace: TraceRunRecord | null;
+  trajectory: TraceStepRecord[];
+  evaluator_scores: MetricScoreRecord[];
+  operation_metadata: ExperimentOperationMetadataRecord;
+  drawer: ExperimentCaseDrawerRecord;
+}
+
+export interface ExperimentMetricDistributionBucketRecord {
+  bucket: string;
+  count: number;
+}
+
+export interface ExperimentMetricStatisticsRecord {
+  evaluator_id?: string;
+  evaluator_name?: string;
+  metric_name: string;
+  layer: LayerName;
+  metric_type: MetricType;
+  average_score: number | null;
+  score_distribution: ExperimentMetricDistributionBucketRecord[];
+}
+
+export interface ExperimentLatencyStatisticsRecord {
+  layer: "retrieval" | "rerank" | "answer" | "total";
+  average_ms: number;
+  min_ms: number;
+  max_ms: number;
+}
+
+export interface ExperimentTokenCostSummaryRecord {
+  input_tokens: number | null;
+  output_tokens: number | null;
+  total_tokens: number | null;
+  estimated_cost_usd: number | null;
+}
+
+export interface ExperimentIndicatorStatisticsRecord {
+  evaluator_aggregated_scores: ExperimentMetricStatisticsRecord[];
+  layer_summaries: ExperimentSummaryLayer[];
+  latency_summary: ExperimentLatencyStatisticsRecord[];
+  token_cost_summary: ExperimentTokenCostSummaryRecord;
+}
+
+export interface ExperimentFieldMappingRecord {
+  source_field: string;
+  target_field: string;
+  source_type?: string;
+  target_type?: string;
+}
+
+export interface ExperimentPromptVariableMappingRecord extends ExperimentFieldMappingRecord {}
+
+export interface ExperimentModelParamsRecord extends Record<string, unknown> {}
+
+export interface ExperimentEvaluatorBindingInputRecord {
+  evaluator_id: string;
+  evaluator_version: string;
+  field_mapping: ExperimentFieldMappingRecord[];
+  weight: number;
+}
+
+export interface ExperimentEvaluatorBindingRecord extends ExperimentEvaluatorBindingInputRecord {
+  evaluator_name: string;
+  layer: LayerName;
+}
+
+export interface ExperimentRunConfigRecord {
+  concurrency: number;
+  timeout_ms: number;
+  retry_limit: number;
+}
+
+export interface ExperimentEvaluatorFieldMappingRecord {
+  evaluator_id: string;
+  evaluator_version: string;
+  evaluator_name: string;
+  layer: LayerName;
+  weight: number;
+  field_mapping: ExperimentFieldMappingRecord[];
+}
+
+export interface ExperimentConfigurationRecord {
+  target_type: TargetType;
+  dataset_id: string;
+  dataset_version: string;
+  prompt_id: string;
+  prompt_version: string;
+  prompt_variable_mappings: ExperimentPromptVariableMappingRecord[];
+  model_params: ExperimentModelParamsRecord;
+  target_info: {
+    selection: TargetSelectionRecord | null;
+    agent_version: AgentRecord | null;
+    prompt_version: PromptRecord | null;
+  };
+  dataset_info: DatasetRecord | null;
+  field_mappings: ExperimentFieldMappingRecord[];
+  evaluator_list: EvaluatorRecord[];
+  evaluator_bindings: ExperimentEvaluatorFieldMappingRecord[];
+  evaluator_field_mappings: ExperimentEvaluatorFieldMappingRecord[];
+  weight_multipliers: Record<string, number>;
+  run_config: ExperimentRunConfigRecord;
+}
+
+export interface ExperimentRootCauseRecord {
+  latest_comparison: AbExperimentRecord | null;
+  related_comparison_ids: string[];
+}
+
+export interface ExperimentDetailRecord {
+  basic_info: ExperimentBasicInfoRecord;
+  case_results: ExperimentCaseDetailRecord[];
+  aggregated_metrics: ExperimentIndicatorStatisticsRecord;
+  configuration_snapshot: ExperimentConfigurationRecord;
+  failure_reason_summary?: string | null;
+  root_cause: ExperimentRootCauseRecord;
 }
 
 export interface TraceStepRecord {
@@ -261,6 +521,9 @@ export interface TraceRunRecord {
   tool_calls: ToolCallRecord[];
   trajectory: TraceStepRecord[];
   error?: string | null;
+  execution_state?: ExperimentExecutionState;
+  message?: string | null;
+  runtime_error?: string | null;
 }
 
 export interface MetricDeltaRecord {
@@ -365,8 +628,14 @@ export interface CreateEvaluatorInput {
 
 export interface CreateExperimentInput {
   dataset_id: string;
-  evaluator_ids?: string[];
-  pipeline_version: SearchPipelineVersionRecord;
+  dataset_version: string;
+  target_type: "prompt";
+  prompt_id: string;
+  prompt_version: string;
+  prompt_variable_mappings: ExperimentPromptVariableMappingRecord[];
+  model_params: ExperimentModelParamsRecord;
+  evaluator_bindings: ExperimentEvaluatorBindingInputRecord[];
+  run_config: ExperimentRunConfigRecord;
 }
 
 export interface CreateComparisonInput {

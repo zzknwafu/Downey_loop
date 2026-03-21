@@ -2,7 +2,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
-import { candidatePipeline, sampleDatasets } from "../src/domain/sample-data.js";
+import { candidatePipeline, sampleDatasets, samplePrompts } from "../src/domain/sample-data.js";
 import { FileBackedLocalStore } from "../src/infra/store.js";
 import {
   createReferencePipelineExecutor,
@@ -10,12 +10,47 @@ import {
 } from "../src/services/eval-loop-service.js";
 
 const tempDirs: string[] = [];
+const originalFetch = globalThis.fetch;
 
 afterEach(async () => {
+  globalThis.fetch = originalFetch;
   await Promise.all(
     tempDirs.splice(0).map((directory) => rm(directory, { recursive: true, force: true })),
   );
 });
+
+const installMockOpenAI = () => {
+  globalThis.fetch = (async () =>
+    new Response(
+      JSON.stringify({
+        id: "resp_test_001",
+        candidates: [
+          {
+            content: {
+              parts: [{ text: "mocked gemini output" }],
+            },
+          },
+        ],
+        usageMetadata: {
+          promptTokenCount: 10,
+          candidatesTokenCount: 5,
+          totalTokenCount: 15,
+        },
+      }),
+      {
+        status: 200,
+        headers: {
+          "Content-Type": "application/json",
+        },
+      },
+    )) as typeof fetch;
+};
+
+const openAiConfig = {
+  apiKey: "test-key",
+  baseUrl: "https://generativelanguage.googleapis.com/v1beta",
+  model: "gemini-2.5-flash",
+};
 
 describe("eval loop service", () => {
   it("seeds default datasets, evaluators, experiments and comparisons", async () => {
@@ -23,7 +58,8 @@ describe("eval loop service", () => {
     tempDirs.push(directory);
 
     const store = new FileBackedLocalStore(join(directory, "store.json"));
-    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
 
     const snapshot = await service.seedDefaults();
 
@@ -40,7 +76,8 @@ describe("eval loop service", () => {
     tempDirs.push(directory);
 
     const store = new FileBackedLocalStore(join(directory, "store.json"));
-    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
     await service.seedDefaults();
 
     const experiment = await service.runExperiment({
@@ -51,7 +88,139 @@ describe("eval loop service", () => {
     const experiments = await service.listExperiments();
     expect(experiment.status).toBe("FINISHED");
     expect(experiment.summary.totalCases).toBe(sampleDatasets[0]!.cases.length);
+    expect(experiment.configuration?.target.id).toBe(candidatePipeline.id);
+    expect(experiment.configuration?.dataset.id).toBe(sampleDatasets[0]!.id);
+    expect(experiment.configuration?.evaluators.length).toBeGreaterThan(1);
+    expect(experiment.evaluatorSet?.bindings.length).toBeGreaterThan(1);
+    expect(experiment.basicInfo?.target.type).toBe("agent");
     expect(experiments.some((item) => item.experimentId === experiment.experimentId)).toBe(true);
+  });
+
+  it("persists explicit experiment run config into configuration snapshot", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-run-config-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
+    await service.seedDefaults();
+
+    const experiment = await service.runExperiment({
+      datasetId: sampleDatasets[0]!.id,
+      target: candidatePipeline,
+      runConfig: {
+        timeoutMs: 45_000,
+        retryLimit: 2,
+        concurrency: 6,
+      },
+    });
+
+    expect(experiment.configuration?.runConfig.sampleCount).toBe(sampleDatasets[0]!.cases.length);
+    expect(experiment.configuration?.runConfig.timeoutMs).toBe(45_000);
+    expect(experiment.configuration?.runConfig.retryLimit).toBe(2);
+    expect(experiment.configuration?.runConfig.concurrency).toBe(6);
+  });
+
+  it("runs prompt targets against ideal_output datasets with multi-evaluator output", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-prompt-run-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
+    await service.seedDefaults();
+
+    const experiment = await service.runExperiment({
+      datasetId: sampleDatasets[0]!.id,
+      target: samplePrompts[0]!,
+    });
+
+    expect(experiment.targetSelection?.type).toBe("prompt");
+    expect(experiment.basicInfo?.target.type).toBe("prompt");
+    expect(experiment.caseRuns[0]?.scores.length).toBeGreaterThan(1);
+    expect(experiment.configuration?.evaluators.length).toBeGreaterThan(1);
+    expect(experiment.configuration?.promptBinding?.promptId).toBe(samplePrompts[0]!.id);
+    expect(experiment.configuration?.promptBinding?.modelConfig.model).toBe("gemini-2.5-flash");
+    expect(experiment.configuration?.promptBinding?.variableMappings[0]?.sourceField).toBe("input");
+  });
+
+  it("persists selected evaluator bindings instead of scoring the full built-in set", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-selected-evals-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
+    await service.seedDefaults();
+
+    const selectedEvaluatorIds = [
+      "eval_retrieval_coverage",
+      "eval_answer_correctness",
+      "eval_proxy_cvr",
+    ];
+
+    const experiment = await service.runExperiment({
+      datasetId: sampleDatasets[0]!.id,
+      target: samplePrompts[0]!,
+      evaluatorIds: selectedEvaluatorIds,
+    });
+
+    expect(experiment.evaluatorSet?.evaluatorIds).toEqual(selectedEvaluatorIds);
+    expect(experiment.configuration?.evaluators).toHaveLength(3);
+    expect(experiment.configuration?.evaluators.every((binding) => binding.evaluatorVersion.length > 0)).toBe(
+      true,
+    );
+    expect(experiment.caseRuns[0]?.scores.map((metric) => metric.metricName)).toEqual([
+      "retrieval_coverage",
+      "answer_correctness",
+      "proxy_cvr",
+    ]);
+  });
+
+  it("persists explicit prompt variable mappings and model params into configuration snapshot", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-prompt-binding-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    installMockOpenAI();
+    const service = new EvalLoopService(store, createReferencePipelineExecutor(), openAiConfig);
+    await service.seedDefaults();
+
+    const experiment = await service.runExperiment({
+      datasetId: sampleDatasets[0]!.id,
+      target: samplePrompts[0]!,
+      evaluatorIds: ["eval_answer_correctness"],
+      promptBinding: {
+        variableMappings: [
+          {
+            sourceField: "input",
+            targetField: "query",
+            sourceType: "String",
+            targetType: "runtime",
+          },
+        ],
+        modelConfig: {
+          model: "gemini-2.5-flash",
+          temperature: 0.4,
+          maxTokens: 512,
+        },
+      },
+    });
+
+    expect(experiment.configuration?.promptBinding?.variableMappings).toEqual([
+      {
+        sourceField: "input",
+        targetField: "query",
+        sourceType: "String",
+        targetType: "runtime",
+      },
+    ]);
+    expect(experiment.configuration?.promptBinding?.modelConfig).toMatchObject({
+      model: "gemini-2.5-flash",
+      temperature: 0.4,
+      maxTokens: 512,
+      topP: 1,
+    });
   });
 
   it("persists comparison results for two experiment runs", async () => {
@@ -136,6 +305,41 @@ describe("eval loop service", () => {
     expect(traces.length).toBeGreaterThan(0);
     expect(await service.getTrace(traces[0]!.traceId)).toBeDefined();
     expect(await service.getLatestComparison()).toBeDefined();
+  });
+
+  it("creates evaluator versions within the same evaluator lineage", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-evaluator-version-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    const first = await service.createEvaluator({
+      name: "answer_correctness_custom",
+      layer: "answer",
+      family: "model",
+      metricType: "binary",
+      description: "first version",
+      config: {},
+      changeSummary: "initial version",
+    });
+
+    const second = await service.createEvaluator({
+      name: "answer_correctness_custom",
+      layer: "answer",
+      family: "model",
+      metricType: "binary",
+      description: "second version",
+      config: {},
+      evaluatorKey: first.evaluatorKey,
+      changeSummary: "tighten binary rubric",
+    });
+
+    expect(first.version).toBe("0.1.0");
+    expect(second.version).toBe("0.1.1");
+    expect(second.previousVersionId).toBe(first.id);
+    expect(second.evaluatorKey).toBe(first.evaluatorKey);
+    expect(second.changeSummary).toBe("tighten binary rubric");
   });
 
   it("updates dataset metadata and schema while preserving stored identity", async () => {
@@ -405,5 +609,33 @@ describe("eval loop service", () => {
     expect(agent.id).toContain("agent_custom_");
     expect(prompts.some((item) => item.id === prompt.id)).toBe(true);
     expect(agents.some((item) => item.id === agent.id)).toBe(true);
+    expect(prompt.name).toBe("食搜回答 Prompt");
+    expect(agent.queryProcessor).toBe("qp-v1");
+  });
+
+  it("rejects invalid prompt and agent target payloads", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "downey-service-target-validation-"));
+    tempDirs.push(directory);
+
+    const store = new FileBackedLocalStore(join(directory, "store.json"));
+    const service = new EvalLoopService(store, createReferencePipelineExecutor());
+
+    await expect(
+      service.createPrompt({
+        name: "坏 Prompt",
+        systemPrompt: "  ",
+        userTemplate: "输入：{{input}}",
+      }),
+    ).rejects.toThrow(/systemPrompt is required/);
+
+    await expect(
+      service.createAgent({
+        name: "坏 Agent",
+        queryProcessor: "qp-v1",
+        retriever: "retriever-v1",
+        reranker: "  ",
+        answerer: "answerer-v1",
+      }),
+    ).rejects.toThrow(/reranker is required/);
   });
 });

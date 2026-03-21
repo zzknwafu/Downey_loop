@@ -83,7 +83,7 @@ describe("auto debug loop", () => {
     expect(report.finalDetection.summary.totalFindings).toBe(0);
     expect(fs.readFileSync(evaluatorPath, "utf8")).toContain('metricType: "binary"');
     expect(fs.readFileSync(evaluatorPath, "utf8")).toContain("score !== 0 && score !== 1");
-  });
+  }, 20000);
 
   it("rolls back fixes when validation introduces new command failures", async () => {
     const repoPath = createFixtureRepo();

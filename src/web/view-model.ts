@@ -28,11 +28,13 @@ export interface DemoDataset {
   cases: DatasetCaseRecord[];
   itemCount: number;
   version: string;
+  source: "remote" | "seeded" | "local_mock";
 }
 
 export interface DemoEvaluator {
   id: string;
   name: string;
+  version: string;
   layer: EvaluatorRecord["layer"];
   metricType: EvaluatorRecord["metric_type"];
   evaluatorFamily: EvaluatorRecord["family"];
@@ -311,13 +313,18 @@ const buildCaseDetails = (
   baseline: ExperimentRun,
   candidate: ExperimentRun,
 ): DemoCaseDetail[] =>
-  sampleCases.map((evalCase) => {
-    const baselineRun = baseline.caseRuns.find((run) => run.caseId === evalCase.caseId)!;
-    const candidateRun = candidate.caseRuns.find((run) => run.caseId === evalCase.caseId)!;
+  sampleCases.flatMap((evalCase) => {
+    const baselineRun = baseline.caseRuns.find((run) => run.caseId === evalCase.caseId);
+    const candidateRun = candidate.caseRuns.find((run) => run.caseId === evalCase.caseId);
+
+    if (!baselineRun || !candidateRun) {
+      return [];
+    }
+
     const baselineMetrics = metricMap(baselineRun.layerMetrics);
     const candidateMetrics = metricMap(candidateRun.layerMetrics);
 
-    return {
+    return [{
       caseId: evalCase.caseId,
       title: evalCase.userQuery,
       domain: evalCase.domain,
@@ -341,10 +348,10 @@ const buildCaseDetails = (
           delta: Number((candidateAverage - baselineAverage).toFixed(4)),
         };
       }),
-    };
+    }];
   });
 
-const mapDatasets = (datasets: DatasetRecord[]): DemoDataset[] =>
+const mapDatasets = (datasets: DatasetRecord[], remoteDatasetIds?: Set<string>): DemoDataset[] =>
   datasets.map((dataset) => ({
     id: dataset.id,
     name: dataset.name,
@@ -354,12 +361,18 @@ const mapDatasets = (datasets: DatasetRecord[]): DemoDataset[] =>
     cases: dataset.cases,
     itemCount: dataset.cases.length,
     version: dataset.version,
+    source: remoteDatasetIds
+      ? remoteDatasetIds.has(dataset.id)
+        ? "remote"
+        : "seeded"
+      : "seeded",
   }));
 
 const mapEvaluators = (evaluators: EvaluatorRecord[]): DemoEvaluator[] =>
   evaluators.map((evaluator) => ({
     id: evaluator.id,
     name: evaluator.name,
+    version: evaluator.version,
     layer: evaluator.layer,
     metricType: evaluator.metric_type,
     evaluatorFamily: evaluator.family,
@@ -378,24 +391,7 @@ const mapMetricDefinitions = (evaluators: EvaluatorRecord[]): MetricDefinition[]
     description: evaluator.description,
   }));
 
-const mergeSeededDatasets = (bootstrap: BootstrapResponse): BootstrapResponse => {
-  const seededDatasets = defaultBootstrap.data.datasets;
-  const remoteDatasetIds = new Set(bootstrap.data.datasets.map((dataset) => dataset.id));
-  const mergedDatasets = [
-    ...bootstrap.data.datasets,
-    ...seededDatasets.filter((dataset) => !remoteDatasetIds.has(dataset.id)),
-  ];
-
-  return {
-    ...bootstrap,
-    data: {
-      ...bootstrap.data,
-      datasets: mergedDatasets,
-    },
-  };
-};
-
-export const buildDemoViewModel = (bootstrap: BootstrapResponse): DemoViewModel => {
+export const buildDemoViewModel = (bootstrap: BootstrapResponse, remoteDatasetIds?: Set<string>): DemoViewModel => {
   const traceMap = new Map(bootstrap.data.traces.map((trace) => [trace.id, trace]));
   const experiments = bootstrap.data.experiments.map((experiment) => buildExperiment(experiment, traceMap));
   const comparison = mapComparison(bootstrap.data.ab_experiment);
@@ -417,7 +413,7 @@ export const buildDemoViewModel = (bootstrap: BootstrapResponse): DemoViewModel 
     groupedBaselineMetrics: groupMetrics(baseline),
     groupedCandidateMetrics: groupMetrics(candidate),
     caseDetails: buildCaseDetails(sampleCases, baseline, candidate),
-    datasets: mapDatasets(bootstrap.data.datasets),
+    datasets: mapDatasets(bootstrap.data.datasets, remoteDatasetIds),
     evaluators: mapEvaluators(bootstrap.data.evaluators),
     experimentCount: bootstrap.data.experiments.length,
     traceCount: bootstrap.data.traces.length,
@@ -433,4 +429,8 @@ export const replaceDemoViewModel = (nextViewModel: DemoViewModel) => {
   Object.assign(demoViewModel, nextViewModel);
 };
 
-export const loadRemoteDemoViewModel = async () => buildDemoViewModel(mergeSeededDatasets(await fetchBootstrap()));
+export const loadRemoteDemoViewModel = async () => {
+  const bootstrap = await fetchBootstrap();
+  const remoteDatasetIds = new Set(bootstrap.data.datasets.map((dataset) => dataset.id));
+  return buildDemoViewModel(bootstrap, remoteDatasetIds);
+};

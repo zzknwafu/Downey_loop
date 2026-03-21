@@ -52,17 +52,20 @@ describe("bootstrap contract", () => {
       (dataset) => dataset.id === "dataset_rerank_guardrail_001",
     );
 
-    expect(retrievalDataset?.cases.map((item) => item.caseId)).toEqual([
-      "food_001",
-      "food_004",
-      "grocery_001",
-      "grocery_003",
-    ]);
-    expect(guardrailDataset?.cases.map((item) => item.caseId)).toEqual([
-      "food_002",
-      "food_003",
-      "grocery_002",
-      "grocery_004",
-    ]);
+    expect(retrievalDataset?.cases.length).toBeGreaterThanOrEqual(10);
+    expect(guardrailDataset?.cases.length).toBeGreaterThanOrEqual(10);
+    expect(retrievalDataset?.cases.map((item) => item.caseId)).toEqual(
+      expect.arrayContaining(["food_001", "food_004", "grocery_001", "grocery_003"]),
+    );
+    expect(guardrailDataset?.cases.map((item) => item.caseId)).toEqual(
+      expect.arrayContaining(["food_002", "food_003", "grocery_002", "grocery_004"]),
+    );
+  });
+
+  it("keeps seeded ideal-output datasets at realistic item counts", () => {
+    for (const dataset of sampleDatasets) {
+      expect(dataset.cases.length).toBeGreaterThanOrEqual(10);
+      expect(dataset.cases.length).toBeLessThanOrEqual(20);
+    }
   });
 });

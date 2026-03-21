@@ -8,6 +8,7 @@ import {
 } from "../domain/sample-data.js";
 import { TraceRun } from "../domain/types.js";
 import { createDatasetDefinition } from "../domain/datasets.js";
+import { toExperimentDetailRecord } from "../server/contract-adapter.js";
 import {
   BootstrapPayload,
   EvalLoopApi,
@@ -18,11 +19,13 @@ import {
 } from "./api.js";
 import type {
   AgentRecord,
+  CreateAgentInput,
   PromptPreviewResult,
   PromptRecord,
   DatasetCaseRecord,
   DatasetSynthesisDirection,
   DatasetSynthesisResult,
+  ExperimentDetailRecord,
   TraceStepRecord,
 } from "../shared/contracts.js";
 
@@ -33,6 +36,7 @@ export const createMockEvalLoopApi = (): EvalLoopApi => {
   const datasets = [...sampleDatasets];
   const prompts = [...samplePrompts];
   const agents = [...sampleAgents];
+  const createdAgents: AgentRecord[] = [];
 
   return {
     async bootstrap() {
@@ -220,7 +224,7 @@ export const createMockEvalLoopApi = (): EvalLoopApi => {
       return sampleEvaluators;
     },
     async listPrompts() {
-      return prompts;
+      return prompts.map((item) => toMockPromptRecord(item));
     },
     async getPrompt(promptId) {
       const prompt = prompts.find((item) => item.id === promptId);
@@ -256,34 +260,38 @@ export const createMockEvalLoopApi = (): EvalLoopApi => {
       return buildPromptPreviewResult(toMockPromptRecord(prompt), input);
     },
     async listAgents() {
-      return agents;
+      return [...createdAgents, ...agents.map((item) => toMockAgentRecord(item))];
+    },
+    async listExperimentItems() {
+      return [baseline, candidate].map(toExperimentListItem);
     },
     async getAgent(agentId) {
+      const created = createdAgents.find((item) => item.id === agentId);
+      if (created) {
+        return created;
+      }
+
       const agent = agents.find((item) => item.id === agentId);
       return agent ? toMockAgentRecord(agent) : undefined;
     },
     async createAgent(input) {
+      const modules = readCompatModules(input);
       const agent: AgentRecord = {
-        id: `agent_mock_${agents.length + 1}`,
+        id: `agent_mock_${createdAgents.length + agents.length + 1}`,
         name: input.name,
-        version: "0.1.0",
+        version: input.version,
         description: input.description,
-        query_processor: input.query_processor,
-        retriever: input.retriever,
-        reranker: input.reranker,
-        answerer: input.answerer,
+        scenario: input.scenario,
+        entry_type: input.entry_type,
+        artifact_ref: input.artifact_ref,
+        composition: input.composition ?? (modules ? buildCompatComposition(modules) : undefined),
+        query_processor: modules?.query_processor,
+        retriever: modules?.retriever,
+        reranker: modules?.reranker,
+        answerer: modules?.answerer,
       };
 
-      agents.unshift({
-        id: agent.id,
-        name: agent.name,
-        version: agent.version,
-        description: agent.description,
-        queryProcessor: agent.query_processor,
-        retriever: agent.retriever,
-        reranker: agent.reranker,
-        answerer: agent.answerer,
-      });
+      createdAgents.unshift(agent);
       return agent;
     },
     async listExperiments() {
@@ -291,6 +299,29 @@ export const createMockEvalLoopApi = (): EvalLoopApi => {
     },
     async getExperiment(experimentId: string) {
       return [baseline, candidate].find((experiment) => experiment.experimentId === experimentId);
+    },
+    async getExperimentDetail(experimentId: string): Promise<ExperimentDetailRecord | undefined> {
+      const experiment = [baseline, candidate].find((item) => item.experimentId === experimentId);
+      if (!experiment) {
+        return undefined;
+      }
+
+      const dataset = datasets.find((item) => item.id === experiment.datasetId);
+      const evaluators =
+        experiment.evaluatorIds && experiment.evaluatorIds.length > 0
+          ? sampleEvaluators.filter((item) => experiment.evaluatorIds?.includes(item.id))
+          : sampleEvaluators;
+
+      return toExperimentDetailRecord({
+        experiment,
+        dataset,
+        evaluators,
+        comparisons: [comparison].filter(
+          (item) =>
+            item.baselineExperimentId === experiment.experimentId ||
+            item.candidateExperimentId === experiment.experimentId,
+        ),
+      });
     },
     async getComparison() {
       return comparison;
@@ -317,6 +348,46 @@ const toMockPromptRecord = (prompt: {
   user_template: prompt.userTemplate,
 });
 
+const buildCompatComposition = (modules: {
+  query_processor: string;
+  retriever: string;
+  reranker: string;
+  answerer: string;
+}): NonNullable<AgentRecord["composition"]> => [
+  { kind: "query_processor", ref: modules.query_processor, role: "query_processor" },
+  { kind: "retriever", ref: modules.retriever, role: "retriever" },
+  { kind: "reranker", ref: modules.reranker, role: "reranker" },
+  { kind: "answerer", ref: modules.answerer, role: "answerer" },
+];
+
+const readCompatModules = (input: CreateAgentInput) => {
+  const queryProcessor =
+    input.query_processor ??
+    input.composition?.find((item) => ["query_processor", "query_understanding"].includes(item.role ?? item.kind))
+      ?.ref;
+  const retriever =
+    input.retriever ??
+    input.composition?.find((item) => ["retriever", "retrieval"].includes(item.role ?? item.kind))?.ref;
+  const reranker =
+    input.reranker ??
+    input.composition?.find((item) => ["reranker", "ranking"].includes(item.role ?? item.kind))?.ref;
+  const answerer =
+    input.answerer ??
+    input.composition?.find((item) => ["answerer", "answer_generation"].includes(item.role ?? item.kind))
+      ?.ref;
+
+  if (!queryProcessor || !retriever || !reranker || !answerer) {
+    return null;
+  }
+
+  return {
+    query_processor: queryProcessor,
+    retriever,
+    reranker,
+    answerer,
+  };
+};
+
 const toMockAgentRecord = (agent: {
   id: string;
   name: string;
@@ -331,6 +402,15 @@ const toMockAgentRecord = (agent: {
   name: agent.name,
   version: agent.version,
   description: agent.description,
+  scenario: "ai_search",
+  entry_type: "workflow",
+  artifact_ref: agent.id,
+  composition: [
+    { kind: "query_processor", ref: agent.queryProcessor, role: "query_processor" },
+    { kind: "retriever", ref: agent.retriever, role: "retriever" },
+    { kind: "reranker", ref: agent.reranker, role: "reranker" },
+    { kind: "answerer", ref: agent.answerer, role: "answerer" },
+  ],
   query_processor: agent.queryProcessor,
   retriever: agent.retriever,
   reranker: agent.reranker,
@@ -350,6 +430,13 @@ const buildPromptPreviewResult = (
     rendered_system_prompt: renderedSystem,
     rendered_user_prompt: renderedUser,
     output_preview: `Preview only: ${input.input}`,
+    actual_model_output: `Preview only: ${input.input}`,
+    debug_info: {
+      prompt_id: prompt.id,
+      prompt_version: prompt.version,
+      rendered_system_prompt: renderedSystem,
+      rendered_user_prompt: renderedUser,
+    },
     created_at: "2026-03-18T00:00:00.000Z",
   };
 };

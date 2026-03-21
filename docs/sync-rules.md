@@ -71,6 +71,13 @@ Date: 2026-03-17
 - `contract -> domain`
 - `mock convenience -> metric rename`
 
+当前还必须遵守一条 Dataset / Experiment 边界：
+
+- 正式 Dataset 列表中的预置 dataset 与真实创建成功的数据集，在产品语义上等价
+- 两者都必须可进入真实 Experiment
+- 只有纯前端 local mock dataset 不能进入真实 Experiment
+- 禁止继续沿用“预置/seeded dataset = mock 展示资产”的旧逻辑
+
 ## 5. Change Scenarios
 
 ### 5.1 Agent 2 wants a new field
@@ -98,6 +105,14 @@ Date: 2026-03-17
 2. 同步更新 `docs/architecture.md` 或 `docs/prd.md`
 3. 通知 Agent 3 更新 adapter/contract
 4. 通知 Agent 2 更新 UI 消费
+
+### 5.4 Agent 2 or Agent 3 still treats preloaded datasets as mock-only
+
+正确做法：
+
+1. 以 PRD 中“正式评测集边界”为准
+2. 预置 dataset 只要在正式 Dataset 列表中出现，就应进入真实 Experiment 选择范围
+3. 只有 `dataset_local_*` 或其他未持久化前端临时数据才应被排除
 
 ## 6. Mandatory Escalation
 

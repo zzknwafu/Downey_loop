@@ -57,7 +57,24 @@ MVP 包含以下核心模块：
 - Evaluator
 - Experiment
 
+模块子 PRD：
+
+- [Targets 子 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-targets.md)
+- [Dataset 子 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-dataset.md)
+- [Evaluators 子 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-evaluators.md)
+- [Experiments 子 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-experiments.md)
+- [版本管理补充 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-versioning.md)
+
 其中，`Targets` 是轻量被测对象管理层，用于承载多个 `PromptVersion` 与 `AgentVersion`，而不是实现完整的 Prompt IDE。
+
+说明：
+
+- `Prompts` 与 `Agents` 是平级 targets
+- `PromptVersion` 是独立一等 target，不并入 `AgentVersion`
+- `AgentVersion` 用于表达任意可版本化的智能体或执行系统
+- AI Search 是当前项目的主场景之一，而不是 `AgentVersion` 的唯一结构定义
+- `Experiment` 的 MVP 执行主线先保证 `PromptVersion`
+- `AgentVersion` 在实验中保留产品入口，但不作为当前 MVP 的执行阻塞项
 
 ## 5. AI Search Layered Evaluation Model
 
@@ -133,18 +150,28 @@ MVP 包含以下核心模块：
 
 #### AgentVersion
 
-用于测完整 AI 搜索 agent 或 search pipeline 的效果。
+用于测任意可版本化的智能体、执行系统或工作流入口。
 
-推荐字段：
+v1 最小通用字段：
 
 - `id`
 - `name`
 - `version`
-- `query_processor`
-- `retriever`
-- `reranker`
-- `answerer`
 - `description`
+- `scenario`
+- `entry_type`
+- `artifact_ref`
+- `composition?`
+
+其中：
+
+- `scenario` 用于描述业务场景，例如 `ai_search`
+- `entry_type` v1 采用标准枚举：
+  - `prompt`
+  - `api`
+  - `workflow`
+- `artifact_ref` 用于引用被测对象
+- `composition?` 是可选高级能力，不阻塞 v1
 
 ### 6.3 Key Features
 
@@ -154,25 +181,132 @@ MVP 包含以下核心模块：
 - 在实验中选择某个 prompt 或 agent 作为被测对象
 - 后续对不同版本做 AB 对比
 
+说明：
+
+- `PromptVersion` 继续服务于 prompt 实验与 preview/debug
+- `AgentVersion` 不再默认等价于 AI Search 固定 pipeline
+- AI Search 中的 `query_understanding / retrieval / ranking / answer_generation` 在新模型里是某种可能的 `composition`，而不是 Agent 的唯一字段集合
+
 ### 6.4 Prompt Page
 
-Prompt 页面在 MVP 阶段只保留两块核心能力：
+Prompt 管理页在 MVP 阶段采用两层结构：
+
+#### 6.4.1 Prompt List
+
+第一层只做 Prompt 列表与版本入口。
+
+承担：
+
+- `Prompt 列表`
+- 版本摘要
+- 当前生效版本摘要
+- 新建 Prompt
+- 进入 Prompt 详情页
+
+不承担：
+
+- Prompt 内容编辑
+- preview/debug 主交互
+- 评测统计与 trace 分析
+
+#### 6.4.2 Prompt Detail
+
+第二层为 Prompt 详情编辑页，只保留两块核心能力：
 
 - `Prompt template`
 - `Preview and debug`
+
+其中：
+
+- `Prompt template` 是主编辑区
+- `Preview and debug` 是单次调试区
+- `Parameter config` 只能作为轻量折叠区或辅助区，不能做主视觉中心
+- 需要提供 `另存模板` 入口，用于把当前 Prompt 内容保存为新的模板或新版本
+- 需要提供 `版本管理` 入口，用于查看历史版本、切换版本、回退到历史版本
 
 说明：
 
 - Prompt 页面支持编辑 prompt template
 - Prompt 页面支持单次 preview/debug 测试
 - Prompt 页面不强制包含 `common configuration`
+- 当前模型固定为 `Gemini`
+- Prompt 页面不做多模型切换
 - 真正的评测、trace、统计与归因统一在 `实验` 中查看
+
+#### 6.4.3 Prompt 版本管理
+
+Prompt 版本管理属于 Prompt 页的标准能力，而不是后续增强能力。
+
+必须支持：
+
+- 查看版本列表
+- 查看每个版本的版本号、更新时间、变更说明
+- 从当前内容 `另存模板` 为新版本
+- 切换到某个历史版本查看内容
+- 将某个历史版本回退为当前生效版本
+
+说明：
+
+- 回退的产品语义是“从历史版本恢复出一个新的当前版本”，而不是删除已有版本链
+- 版本链需要可审计，便于后续实验绑定具体 Prompt 版本
 
 说明：
 
 - MVP 不做重型 Prompt 开发器
 - MVP 不要求完整 playground
 - 但必须支持“几个 prompt / 几个 agent”可被测、可被比较
+
+### 6.5 Agent Page
+
+Agent 页面在新 Targets 心智下，应围绕“通用被测对象”展开，而不是围绕 AI Search pipeline 固定字段展开。
+
+推荐页面结构：
+
+- `Agent List`
+  - `Name`
+  - `Version`
+  - `Scenario`
+  - `Description`
+  - `Composition summary`
+  - `Last Eval Score`
+- `Create Agent`
+  - Step 1：基础信息
+  - Step 2：模式选择 `Simple / Advanced`
+
+#### 6.5.1 Simple Mode
+
+默认入口，低门槛录入被测对象。
+
+最小字段：
+
+- `name`
+- `version`
+- `description`
+- `scenario`
+- `entry_type`
+- `artifact_ref`
+
+#### 6.5.2 Advanced Mode
+
+可见但选填，用于表达模块组合。
+
+可选能力：
+
+- `composition`
+- module registry 选择
+
+v1 只做声明，不要求执行层必须按 composition 驱动。
+
+starter set 建议为：
+
+- `query_understanding`
+- `retrieval`
+- `ranking`
+- `answer_generation`
+- `planning`
+- `tool_use`
+- `memory`
+- `verification`
 
 ## 7. Dataset Module
 
@@ -244,6 +378,23 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - 浏览和筛选样本
 - 通过智能合成定向补样
 
+### 6.3.1 Case 录入规则
+
+在 `Evaluation set` 中，样本录入遵循以下规则：
+
+- `id` 由系统默认自动生成，作为唯一主键
+- 用户可以在新建样本时自定义 `name`，但不强制填写
+- `name` 用于展示和识别，不承担主键职责
+- `context` 不是强制必填字段
+- 用户不应被默认要求手写完整 `context JSON`
+- 页面应优先提供结构化输入项，系统再自动组装写入 `context`
+
+说明：
+
+- 主线录入字段优先是 `input` 与 `reference_output`
+- `context` 属于高级补充信息
+- 结构化输入形成的 `context` 需与 dataset schema 保持一致
+
 ### 6.4 Dataset Page Structure
 
 数据集页面在 MVP 阶段拆成两个一级 tab：
@@ -262,7 +413,27 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - `智能合成` 作为独立侧线能力推进，不阻塞正式 Dataset 管理、Experiment 和 Prompt 主流程
 - 如果智能合成未完成，主线产品仍然应可独立运行
 
-### 6.5 智能合成
+### 6.4.1 正式评测集边界
+
+在产品语义上，以下 dataset 都属于正式评测集：
+
+- 通过真实 `POST /api/datasets` 创建成功并持久化的数据集
+- 当前随产品预置、并出现在 Dataset 页面正式列表中的内置数据集
+
+说明：
+
+- 这批预置 dataset 已升级为正式可用数据集
+- 它们与用户创建成功的数据集在产品语义上等价
+- 只要出现在正式 Dataset 列表中，就应允许进入 `Experiment` 主流程
+
+以下数据不属于正式评测集：
+
+- 仅存在于前端本地状态中的 local mock dataset
+- 仅用于页面演示、未经过真实持久化链路的数据
+
+这些 mock 数据只可用于 Dataset 管理页演示，不能进入真实 Experiment
+
+### 7.5 智能合成
 
 智能合成的目标不是“随机补更多数据”，而是为某个明确评测目标定向补样。
 
@@ -285,7 +456,7 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - 智能合成不是主线 MVP 验收项
 - 主线验收以 `Evaluation set`、`Targets`、`Evaluators`、`Experiments` 为主
 
-#### 6.5.1 Purpose
+#### 7.5.1 Purpose
 
 智能合成的目的不是随机扩样，而是“带目标地补样本”，用于：
 
@@ -295,14 +466,14 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - 对齐线上 trace 或线上问题分布
 - 为 AB 实验补足更有区分度的 case
 
-#### 6.5.2 Interaction Flow
+#### 7.5.2 Interaction Flow
 
 参考 Coze Loop 的交互，智能合成采用两步流程：
 
 1. `合成场景及来源`
 2. `合成样本配置`
 
-#### 6.5.3 Step 1: 合成场景及来源
+#### 7.5.3 Step 1: 合成场景及来源
 
 用户必须先明确：
 
@@ -329,7 +500,7 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - 商超搜索，补“缺货替代不合理”的失败样本
 - AI 搜索导购，补“推荐解释不足导致转化下降”的样本
 
-#### 6.5.4 Step 2: 合成样本配置
+#### 7.5.4 Step 2: 合成样本配置
 
 用户配置：
 
@@ -345,7 +516,7 @@ Prompt 页面在 MVP 阶段只保留两块核心能力：
 - 更偏召回噪声过高
 - 更偏高购买意图但答案冗长
 
-#### 6.5.5 Direction Types
+#### 7.5.5 Direction Types
 
 MVP 先支持以下合成方向：
 
@@ -358,7 +529,7 @@ MVP 先支持以下合成方向：
 - `align_online_distribution`
   - 更贴近线上 trace / 线上问题分布
 
-#### 6.5.6 Output Rules
+#### 7.5.6 Output Rules
 
 - 合成结果先进入草稿区
 - 不直接写入正式 `Evaluation set`
@@ -491,6 +662,48 @@ MVP 先支持以下合成方向：
 - 评测结果与观测结果统一在实验板块内查看
 - trace、统计、归因都作为实验结果下钻能力存在
 - 不再单独强调与实验割裂的“观测中心”
+- 实验绑定的是通用 `Target`
+- Experiment 绑定的 dataset 必须来自正式评测集集合，包含内置预置 dataset 与真实创建成功的数据集
+
+页面结构要求：
+
+- Experiment 首页只做实验列表
+- Experiment 详情页承载：
+  - `Basic Information`
+  - `Data detail`
+  - `Indicator statistics`
+  - `Experiment configuration`
+- 样本级下钻通过 `Case Detail Drawer`
+
+详情页一级控件要求：
+
+- 提供 `Evaluator layer filter`
+- 用于切换：
+  - `Retrieval`
+  - `Rerank`
+  - `Answer`
+  - `Overall`
+
+职责边界：
+
+- `Data detail` 负责 case 明细
+- `Indicator statistics` 负责聚合统计与分布
+- 两者不能重复承担同一种信息展示职责
+
+### 8.3.1 Target Binding
+
+`Experiment -> Target`
+
+其中 `Target` 可以是：
+
+- `PromptVersion`
+- `AgentVersion`
+
+说明：
+
+- v1 默认只做 `root-level eval`
+- `module-level eval` 明确为二期
+- 当前项目仍优先支持 AI Search 分层评测，但这属于 `scenario` 与 evaluator 设计，不再反向定义 `AgentVersion` 的固定结构
 
 ### 8.4 AB 实验
 

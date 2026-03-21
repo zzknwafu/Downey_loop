@@ -295,3 +295,78 @@ Start Date: 2026-03-17
 - 预计时间是否变化
 
 如果某天出现明显返工、阻塞或计划偏移，也应在这里记录，而不是只写进复盘文档。
+
+## 2026-03-21
+
+### 今日进展
+
+- 继续收口 `Prompt-first Experiment MVP`，明确本轮实验只保证 Prompt 可测，Agent 不阻塞交付。
+- 补齐了 Prompt 页信息架构：
+  - Prompt List
+  - Prompt Detail
+  - `Prompt template`
+  - `Preview and debug`
+  - 另存模板
+  - 版本管理
+  - 回退
+- 补齐了 Dataset / Evaluator 的版本管理方案：
+  - 对象本体 + 不可变版本快照
+  - 保存为新版本
+  - 另存为新对象
+  - 回退生成新版本
+- 新增三份文档：
+  - [版本管理补充 PRD](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/prd-versioning.md)
+  - [Agent 2 / Agent 3 分工说明](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/agent-versioning-division.md)
+  - [主 agent 领域模型改造清单](/Users/zhangchaokai/Documents/贪吃蛇/Downey_evals_loop/docs/domain-refactor-checklist.md)
+- 修复了 Gemini 调用层的一个真实阻塞问题：
+  - 不再把 `model` 错误塞进 `generationConfig`
+- 验证通过：
+  - `npm test`：`76/76`
+  - `npm run build`：通过
+
+### 今日问题
+
+- Experiment 前端仍在 fallback mock 模式，创建失败后会复制 baseline 结果伪装成本地实验。
+- 真实 Prompt experiment create 链路还没完全打通。
+- create experiment 的 payload / contract 仍有字段不一致问题。
+- Experiment 详情页仍有固定全量指标列，未完全按本次选择的 evaluator 裁剪。
+- Basic Information 仍然存在展示摘要不足的问题。
+
+### 当日结论
+
+- 真实实验失败可以失败，但不能伪造成功结果。
+- Prompt-first MVP 方向正确，应继续坚持：
+  - Prompt 先跑通
+  - Agent 先不阻塞
+- 版本管理必须进入正式方案，不能继续停留在临时命名和 latest 覆盖式编辑。
+- 现在的重点不是继续扩产品，而是打通“真实创建、真实执行、真实展示”。
+
+### 明日优先级
+
+#### P0
+
+- 去掉前端 Experiment create 的 baseline/mock fallback
+- 打通真实 `/api/experiments`
+- 确保不同 dataset / evaluator 选择能产生真实不同结果
+
+#### P1
+
+- Experiment detail 只展示本次 experiment 实际绑定的 evaluator
+- 补 basic info summary contract
+- 继续收口 Prompt experiment 输入结构
+
+#### P2
+
+- 继续落地 Dataset / Evaluator / Prompt 的版本管理
+- 让 Experiment configuration 回读具体版本
+
+### 预计时间是否变化
+
+- 主线 MVP 可用版：由原来的 `2026-03-21 到 2026-03-23` 调整为 `2026-03-23 到 2026-03-25`
+- 主线 MVP 稳定版：由原来的 `2026-03-24 到 2026-03-26` 调整为 `2026-03-26 到 2026-03-28`
+
+调整原因：
+
+- Experiment 真实创建链路仍未完全打通
+- 前端仍存在 fallback mock 误导
+- 版本管理进入正式方案后，主线实现工作量比原先估计更高

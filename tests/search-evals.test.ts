@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { compareExperiments } from "../src/domain/comparison.js";
-import { evaluateSearchCase } from "../src/domain/evaluators.js";
+import { builtInEvaluators, evaluateSearchCase } from "../src/domain/evaluators.js";
 import { buildRootCauseSummary } from "../src/domain/root-cause.js";
 import { buildSampleExperiments, sampleCases } from "../src/domain/sample-data.js";
 import { ExperimentCaseRun, MetricDelta, RetrievalCandidate } from "../src/domain/types.js";
@@ -52,6 +52,13 @@ const buildRun = (
 };
 
 describe("search evaluator", () => {
+  it("assigns stable evaluator lineage keys to built-in evaluators", () => {
+    const keys = new Set(builtInEvaluators.map((evaluator) => evaluator.evaluatorKey));
+
+    expect(keys.size).toBe(builtInEvaluators.length);
+    expect(builtInEvaluators.every((evaluator) => evaluator.version.length > 0)).toBe(true);
+  });
+
   it("keeps answer correctness binary", () => {
     const evalCase = sampleCases[0]!;
     const run = buildRun(

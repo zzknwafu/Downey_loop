@@ -7,8 +7,16 @@ import {
   RetrievalCandidate,
 } from "./types.js";
 
+const VERSION_PATTERN = /^(\d+)\.(\d+)\.(\d+)$/;
+
 const asSet = (values: string[]) => new Set(values);
 const normalizeToken = (value: string) => value.trim().toLowerCase();
+const normalizeEvaluatorKey = (value: string) =>
+  value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
 
 const overlapRatio = (actual: string[], expected: string[]): number => {
   if (expected.length === 0) {
@@ -597,7 +605,64 @@ const binaryResult = (
   };
 };
 
-export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): MetricResult[] => {
+const resolveEvaluatorMetricName = (evaluator: Evaluator): string => {
+  if (typeof evaluator.config.ruleName === "string" && evaluator.config.ruleName.length > 0) {
+    return evaluator.config.ruleName;
+  }
+
+  if (evaluator.name.length > 0) {
+    return evaluator.name;
+  }
+
+  return evaluator.id.replace(/^eval_/, "");
+};
+
+export const buildEvaluatorKey = (input: {
+  name: string;
+  layer: Evaluator["layer"];
+  family: Evaluator["family"];
+}): string => normalizeEvaluatorKey(`${input.layer}_${input.family}_${input.name}`);
+
+export const bumpEvaluatorVersion = (version: string): string => {
+  const match = version.match(VERSION_PATTERN);
+  if (!match) {
+    return "0.1.0";
+  }
+
+  const major = Number(match[1]);
+  const minor = Number(match[2]);
+  const patch = Number(match[3]);
+  return `${major}.${minor}.${patch + 1}`;
+};
+
+export const sortEvaluatorVersions = (evaluators: Evaluator[]): Evaluator[] =>
+  [...evaluators].sort((left, right) => {
+    const leftMatch = left.version.match(VERSION_PATTERN);
+    const rightMatch = right.version.match(VERSION_PATTERN);
+    if (!leftMatch || !rightMatch) {
+      return right.version.localeCompare(left.version);
+    }
+
+    const leftParts = leftMatch.slice(1).map(Number);
+    const rightParts = rightMatch.slice(1).map(Number);
+    for (let index = 0; index < 3; index += 1) {
+      const diff = rightParts[index]! - leftParts[index]!;
+      if (diff !== 0) {
+        return diff;
+      }
+    }
+
+    return right.id.localeCompare(left.id);
+  });
+
+export const latestEvaluatorVersion = (evaluators: Evaluator[]): Evaluator | undefined =>
+  sortEvaluatorVersions(evaluators)[0];
+
+export const evaluateSearchCase = (
+  evalCase: EvalCase,
+  run: ExperimentCaseRun,
+  evaluators: Evaluator[] = builtInEvaluators,
+): MetricResult[] => {
   const retrievalCandidates =
     (run.trace.retrievalTrace.outputs.retrievalResult as RetrievalCandidate[]) ?? [];
   const retrievalIds = retrievalCandidates.map((candidate) => candidate.id);
@@ -746,7 +811,7 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
     run.trace.rerankTrace.latencyMs +
     run.trace.answerTrace.latencyMs;
 
-  return [
+  const allResults: MetricResult[] = [
     {
       metricName: "retrieval_coverage",
       layer: "retrieval",
@@ -958,15 +1023,34 @@ export const evaluateSearchCase = (evalCase: EvalCase, run: ExperimentCaseRun): 
       reason: "整体响应时延",
     },
   ];
+
+  const metricByName = new Map(allResults.map((metric) => [metric.metricName, metric]));
+
+  return evaluators
+    .filter((evaluator) => metricByName.has(resolveEvaluatorMetricName(evaluator)))
+    .map((evaluator) => {
+      const metricName = resolveEvaluatorMetricName(evaluator);
+      const metric = metricByName.get(metricName)!;
+      return {
+        ...metric,
+        evaluatorId: evaluator.id,
+      };
+    });
 };
 
 export const builtInEvaluators: Evaluator[] = metricDefinitions.map((metric) => ({
   id: `eval_${metric.name}`,
+  evaluatorKey: buildEvaluatorKey({
+    name: metric.name,
+    layer: metric.layer,
+    family: metric.evaluatorFamily,
+  }),
   name: metric.name,
   layer: metric.layer,
   family: metric.evaluatorFamily,
   metricType: metric.metricType,
   version: "0.3.0",
+  changeSummary: "当前内置评估器基线版本",
   description: metric.description,
   config:
     metric.evaluatorFamily === "code"

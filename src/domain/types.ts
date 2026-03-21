@@ -157,11 +157,14 @@ export interface MetricDefinition {
 
 export interface Evaluator {
   id: string;
+  evaluatorKey: string;
   name: string;
   layer: LayerName;
   family: EvaluatorFamily;
   metricType: MetricType;
   version: string;
+  previousVersionId?: string;
+  changeSummary?: string;
   description: string;
   config: Record<string, unknown>;
   codeStrategy?: CodeEvaluatorStrategy;
@@ -185,6 +188,7 @@ export interface TraceRun {
   rerankTrace: LayerTrace;
   answerTrace: LayerTrace;
   layerMetrics?: Record<string, MetricResult>;
+  error?: string | null;
 }
 
 export interface LayerRun {
@@ -214,12 +218,119 @@ export interface ExperimentRunSummary {
   failedCases: number;
   invalidJudgmentCount: number;
   averageMetrics: Record<string, number>;
+  metricSummaries: ExperimentMetricSummary[];
+  layerSummaries: ExperimentLayerSummary[];
+}
+
+export interface ExperimentMetricSummary {
+  metricName: string;
+  layer: LayerName;
+  averageScore?: number;
+  successCount: number;
+  invalidJudgmentCount: number;
+  runtimeErrorCount: number;
+}
+
+export interface ExperimentLayerSummary {
+  layer: LayerName;
+  evaluatorCount: number;
+  metricCount: number;
+  averageScore?: number;
+  successCount: number;
+  invalidJudgmentCount: number;
+  runtimeErrorCount: number;
+}
+
+export interface ExperimentFieldMapping {
+  sourceField: string;
+  targetField: string;
+  sourceType?: DatasetColumnType | "runtime";
+  targetType?: DatasetColumnType | "runtime";
+}
+
+export interface ExperimentEvaluatorBinding {
+  evaluatorId: string;
+  evaluatorVersion: string;
+  evaluatorName: string;
+  layer: LayerName;
+  weight: number;
+  fieldMappings: ExperimentFieldMapping[];
+}
+
+export interface ExperimentEvaluatorSet {
+  evaluatorIds: string[];
+  bindings: ExperimentEvaluatorBinding[];
+}
+
+export interface ExperimentRunConfig {
+  sampleCount: number;
+  timeoutMs: number;
+  retryLimit: number;
+  concurrency: number;
+}
+
+export interface PromptModelConfig {
+  model: string;
+  temperature?: number;
+  topP?: number;
+  maxTokens?: number;
+}
+
+export interface ExperimentPromptBinding {
+  promptId: string;
+  promptVersion: string;
+  variableMappings: ExperimentFieldMapping[];
+  modelConfig: PromptModelConfig;
+}
+
+export interface ExperimentBasicInfo {
+  target: {
+    id: string;
+    type: TargetType;
+    version: string;
+    label: string;
+  };
+  dataset: {
+    id: string;
+    name: string;
+    version: string;
+    datasetType: DatasetType;
+  };
+  evaluatorCount: number;
+  status: ExperimentStatus;
+  totalCases: number;
+  completedCases: number;
+  failedCases: number;
+  invalidJudgmentCount: number;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+export interface ExperimentConfigurationSnapshot {
+  target: {
+    id: string;
+    type: TargetType;
+    version: string;
+    label: string;
+  };
+  dataset: {
+    id: string;
+    name: string;
+    version: string;
+    datasetType: DatasetType;
+    columns: DatasetColumn[];
+    fieldMappings: ExperimentFieldMapping[];
+  };
+  promptBinding?: ExperimentPromptBinding;
+  evaluators: ExperimentEvaluatorBinding[];
+  runConfig: ExperimentRunConfig;
 }
 
 export interface ExperimentRun {
   experimentId: string;
   datasetId?: string;
   evaluatorIds?: string[];
+  evaluatorSet?: ExperimentEvaluatorSet;
   targetRef?: TargetRef;
   targetSelection?: ExperimentTargetSelection;
   pipelineVersionId?: string;
@@ -228,6 +339,8 @@ export interface ExperimentRun {
   startedAt?: string;
   finishedAt?: string;
   summary: ExperimentRunSummary;
+  basicInfo?: ExperimentBasicInfo;
+  configuration?: ExperimentConfigurationSnapshot;
   caseRuns: ExperimentCaseRun[];
 }
 
@@ -297,6 +410,7 @@ export interface PipelineExecutionResult {
   rerankResult: RetrievalCandidate[];
   answerOutput: string;
   supportingEvidence?: string[];
+  debugInfo?: Record<string, unknown>;
   latencyMs?: {
     retrieval: number;
     rerank: number;
@@ -306,9 +420,14 @@ export interface PipelineExecutionResult {
 
 export interface StartExperimentInput {
   dataset: Dataset;
-  target: SearchPipelineVersion;
+  target: EvalTarget;
   evaluators: Evaluator[];
+  executionTarget?: SearchPipelineVersion;
   targetSelection?: ExperimentTargetSelection;
+  promptBinding?: Partial<Pick<ExperimentPromptBinding, "variableMappings">> & {
+    modelConfig?: Partial<PromptModelConfig>;
+  };
+  runConfig?: Partial<ExperimentRunConfig>;
 }
 
 export interface LocalStoreSnapshot {
